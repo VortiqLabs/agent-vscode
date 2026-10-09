@@ -12,7 +12,11 @@ import {
     generateAuthToken
 } from "./mcp/auth";
 
-export function activate(
+import {
+    VortiqMcpServer
+} from "./mcp/server";
+
+export async function activate(
     context: vscode.ExtensionContext
 ) {
     console.log(
@@ -20,8 +24,7 @@ export function activate(
     );
 
     let authToken =
-        process.env.VORTIQLABS_AGENT_AUTH_TOKEN ||
-        process.env.MCP_AUTH_TOKEN;
+        process.env.VORTIQLABS_AGENT_AUTH_TOKEN;
 
     if (!authToken) {
         authToken = generateAuthToken();
@@ -43,24 +46,43 @@ export function activate(
             }
         );
 
-    void agentServer.start()
-        .then(() => {
-            console.log(
-                `VortiqLabs Agent server listening on ` +
-                `http://${agentServer.getHost()}:` +
-                `${agentServer.getPort()}`
-            );
-        })
-        .catch(error => {
-            console.error(
-                "Failed to start VortiqLabs Agent server:",
-                error
-            );
+    try {
+        await agentServer.start();
+        console.log(
+            `VortiqLabs Agent server listening on ` +
+            `http://${agentServer.getHost()}:` +
+            `${agentServer.getPort()}`
+        );
+    } catch (error) {
+        console.error("Failed to start VortiqLabs Agent server:", error);
+        vscode.window.showErrorMessage(
+            "VortiqLabs Agent failed to start its local server."
+        );
+        return;
+    }
 
-            vscode.window.showErrorMessage(
-                "VortiqLabs Agent failed to start its local server."
-            );
-        });
+    const workspaceRoot =
+        process.env.MCP_WORKSPACE_ROOT ||
+        vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    const mcpServer = new VortiqMcpServer({
+        workspaceRoot,
+        agentUrl: process.env.VORTIQLABS_AGENT_URL || "http://127.0.0.1:43127",
+        agentAuthToken: authToken
+    });
+
+    try {
+        await mcpServer.start();
+        console.log(
+            `VortiqLabs Agent MCP server listening on ` +
+            `http://${mcpServer.getHost()}:${mcpServer.getPort()}/mcp`
+        );
+    } catch (error) {
+        console.error("Failed to start VortiqLabs Agent MCP server:", error);
+        vscode.window.showErrorMessage(
+            "VortiqLabs Agent MCP server failed to start."
+        );
+        return;
+    }
 
     const workspaceCommand =
         vscode.commands.registerCommand(
@@ -302,6 +324,25 @@ export function activate(
         fileReadCommand,
         fileWriteCommand,
         fileEditCommand,
+        {
+            dispose: () => {
+                void agent.dispose().catch(error => {
+                    console.error("Failed to stop Codebase Indexer background processes:", error);
+                });
+            }
+        },
+        {
+            dispose: () => {
+                void mcpServer
+                    .stop()
+                    .catch(error => {
+                        console.error(
+                            "Failed to stop VortiqLabs Agent MCP server:",
+                            error
+                        );
+                    });
+            }
+        },
         {
             dispose: () => {
                 void agentServer

@@ -2,7 +2,6 @@
 import * as path from "path";
 import * as fs from "fs";
 import { VortiqMcpServer } from "./server";
-import { generateAuthToken } from "./auth";
 
 async function main() {
     // Load .env file if present in working directory or repo root
@@ -30,24 +29,9 @@ async function main() {
     const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
     const workspaceRoot = process.env.MCP_WORKSPACE_ROOT || process.cwd();
 
-    let authToken = process.env.MCP_AUTH_TOKEN;
-    if (!authToken) {
-        authToken = generateAuthToken();
-        process.env.MCP_AUTH_TOKEN = authToken;
-        process.stderr.write(
-            `\n============================================================\n` +
-            `[NOTICE] No MCP_AUTH_TOKEN found in environment.\n` +
-            `Generated temporary auth token for this session:\n\n` +
-            `  MCP_AUTH_TOKEN=${authToken}\n\n` +
-            `Use header 'Authorization: Bearer ${authToken}' when making requests.\n` +
-            `============================================================\n\n`
-        );
-    }
-
     const server = new VortiqMcpServer({
         host,
         port,
-        authToken,
         workspaceRoot
     });
 

@@ -2,6 +2,8 @@ import { WorkspaceManager } from "../workspace/manager";
 import { SafeWorkspace } from "../mcp/workspace";
 import { FileTool } from "../tools/file";
 import { GitTool } from "../tools/git";
+import { TerminalTool } from "../tools/terminal";
+import { FileDiagnostic, FileDiagnosticsResult } from "../tools/diagnostics";
 import { IndexerService } from "../indexer/indexer";
 import { IndexerOptions } from "../indexer/types";
 import { IndexerRuntimeManager } from "../indexer/runtime/manager";
@@ -9,10 +11,12 @@ import { AgentRequest, AgentResponse } from "./types";
 import { parseAgentRequest } from "./protocol";
 
 export class Agent {
+    private readonly context?: unknown;
     private readonly workspaceManager: WorkspaceManager;
     private readonly safeWorkspace: SafeWorkspace;
     private readonly fileTool: FileTool;
     private readonly gitTool: GitTool;
+    private readonly terminalTool: TerminalTool;
     private readonly runtimeManager: IndexerRuntimeManager;
     private readonly indexer: IndexerService;
 
@@ -20,11 +24,13 @@ export class Agent {
         context?: unknown,
         explicitWorkspaceRoot?: string
     ) {
+        this.context = context;
         this.workspaceManager = new WorkspaceManager(context, explicitWorkspaceRoot);
         const rootPath = this.workspaceManager.getWorkspaceRootPath();
         this.safeWorkspace = new SafeWorkspace(rootPath);
         this.fileTool = new FileTool(this.workspaceManager);
         this.gitTool = new GitTool(this.workspaceManager, rootPath);
+        this.terminalTool = new TerminalTool(this.workspaceManager);
         this.runtimeManager = new IndexerRuntimeManager(context);
         this.indexer = new IndexerService(this.runtimeManager, rootPath);
     }
@@ -77,6 +83,22 @@ export class Agent {
                     maxResults: this.optionalNumber(request.arguments, "maxResults")
                 });
 
+            case "workspace.find_todos":
+                return this.findTodos(
+                    this.optionalNumber(request.arguments, "maxResults")
+                );
+
+            case "terminal.execute":
+                return this.terminalTool.execute(
+                    this.requireString(request.arguments, "command"),
+                    this.optionalNumber(request.arguments, "timeoutMs")
+                );
+
+            case "file.diagnostics":
+                return this.getFileDiagnostics(
+                    this.requireString(request.arguments, "path")
+                );
+
             case "file.read":
                 return this.fileTool.read({
                     path: this.requireString(request.arguments, "path")
@@ -112,11 +134,17 @@ export class Agent {
                     patch: this.requireString(request.arguments, "patch")
                 });
 
-            case "indexer.index":
-                return this.indexer.cli.index(
-                    this.optionalString(request.arguments, "path"),
-                    this.indexerOptions(request.arguments)
-                );
+            case "indexer.install":
+                return this.installIndexerRuntime();
+
+            case "indexer.index": {
+                const requestedPath = this.optionalString(request.arguments, "path");
+                const safePath = requestedPath ? this.workspaceManager.resolvePath(requestedPath) ?? undefined : undefined;
+                if (requestedPath && !safePath) {
+                    throw new Error(`Index path is outside the active workspace or invalid: ${requestedPath}`);
+                }
+                return this.indexer.cli.index(safePath, this.indexerOptions(request.arguments));
+            }
 
             case "indexer.index_github":
                 return this.indexer.cli.indexGithub(
@@ -157,11 +185,48 @@ export class Agent {
                     this.indexerOptions(request.arguments)
                 );
 
-            case "indexer.files":
-                return this.indexer.cli.files(
-                    this.optionalString(request.arguments, "query"),
+            case "indexer.dependencies":
+                return this.indexer.cli.dependencies(
+                    this.requireString(request.arguments, "query"),
                     this.indexerOptions(request.arguments)
                 );
+
+            case "indexer.dependents":
+                return this.indexer.cli.dependents(
+                    this.requireString(request.arguments, "query"),
+                    this.indexerOptions(request.arguments)
+                );
+
+            case "indexer.path":
+                return this.indexer.cli.symbolPath(
+                    this.requireString(request.arguments, "from"),
+                    this.requireString(request.arguments, "to"),
+                    this.indexerOptions(request.arguments)
+                );
+
+            case "indexer.repository_map":
+                return this.indexer.cli.repositoryMap(this.indexerOptions(request.arguments));
+
+            case "indexer.api_endpoints":
+                return this.indexer.cli.apiEndpoints(this.indexerOptions(request.arguments));
+
+            case "indexer.classify_query":
+                return this.indexer.cli.classifyQuery(
+                    this.requireString(request.arguments, "query"),
+                    this.indexerOptions(request.arguments)
+                );
+
+            case "indexer.sensitive_regions":
+                return this.indexer.cli.sensitiveRegions(this.indexerOptions(request.arguments));
+
+            case "indexer.stop_watch":
+                return this.indexer.cli.stopBackground("watch");
+
+            case "indexer.stop_dashboard":
+                return this.indexer.cli.stopBackground("dashboard");
+
+            case "indexer.files":
+                return this.indexer.cli.files(this.indexerOptions(request.arguments));
 
             case "indexer.inspect":
                 return this.indexer.cli.inspect(
@@ -169,17 +234,26 @@ export class Agent {
                     this.indexerOptions(request.arguments)
                 );
 
-            case "indexer.remove":
-                return this.indexer.cli.remove(
-                    this.requireString(request.arguments, "path"),
-                    this.indexerOptions(request.arguments)
-                );
+            case "indexer.remove": {
+                if (request.arguments.confirm !== true) {
+                    throw new Error("Index removal is destructive; pass confirm=true after verifying the target workspace.");
+                }
+                const requestedPath = this.optionalString(request.arguments, "path") ?? ".";
+                const safePath = this.workspaceManager.resolvePath(requestedPath);
+                if (!safePath) {
+                    throw new Error(`Index removal path is outside the active workspace or invalid: ${requestedPath}`);
+                }
+                return this.indexer.cli.remove(safePath, { ...this.indexerOptions(request.arguments), force: true });
+            }
 
-            case "indexer.watch":
-                return this.indexer.cli.watch(
-                    this.optionalString(request.arguments, "path"),
-                    this.indexerOptions(request.arguments)
-                );
+            case "indexer.watch": {
+                const requestedPath = this.optionalString(request.arguments, "path");
+                const safePath = requestedPath ? this.workspaceManager.resolvePath(requestedPath) ?? undefined : undefined;
+                if (requestedPath && !safePath) {
+                    throw new Error(`Watch path is outside the active workspace or invalid: ${requestedPath}`);
+                }
+                return this.indexer.cli.watch(safePath, this.indexerOptions(request.arguments));
+            }
 
             case "indexer.dashboard":
                 return this.indexer.cli.dashboard(this.indexerOptions(request.arguments));
@@ -227,6 +301,127 @@ export class Agent {
         return value;
     }
 
+    private async installIndexerRuntime(): Promise<unknown> {
+        try {
+            const vscode = require("vscode") as typeof import("vscode");
+            if (vscode.window?.withProgress) {
+                return vscode.window.withProgress(
+                    {
+                        location: vscode.ProgressLocation.Notification,
+                        title: "Installing Codebase Indexer",
+                        cancellable: false
+                    },
+                    async progress => {
+                        progress.report({ message: "Downloading or verifying the platform runtime..." });
+                        const runtime = await this.indexer.cli.ensureRuntime();
+                        progress.report({ message: `Codebase Indexer ${runtime.version} is ready.` });
+                        return runtime;
+                    }
+                );
+            }
+        } catch {
+            // The Agent can also run in standalone/test contexts without VS Code UI.
+        }
+        return this.indexer.cli.ensureRuntime();
+    }
+
+    async dispose(): Promise<void> {
+        await Promise.all([
+            this.indexer.cli.stopBackground("watch"),
+            this.indexer.cli.stopBackground("dashboard")
+        ]);
+    }
+
+    private async getFileDiagnostics(filePath: string): Promise<FileDiagnosticsResult> {
+        const fullPath = this.workspaceManager.resolvePath(filePath);
+        if (!fullPath) {
+            throw new Error(`Path is outside the active workspace or invalid: ${filePath}`);
+        }
+
+        if (!this.context) {
+            throw new Error("File diagnostics require the VS Code extension Agent to be running.");
+        }
+
+        let vscode: typeof import("vscode");
+        try {
+            vscode = require("vscode") as typeof import("vscode");
+        } catch {
+            throw new Error("File diagnostics are only available inside VS Code.");
+        }
+
+        const diagnostics = vscode.languages.getDiagnostics(vscode.Uri.file(fullPath))
+            .filter(diagnostic =>
+                diagnostic.severity === vscode.DiagnosticSeverity.Error ||
+                diagnostic.severity === vscode.DiagnosticSeverity.Warning
+            )
+            .map(diagnostic => ({
+                message: diagnostic.message,
+                severity: diagnostic.severity === vscode.DiagnosticSeverity.Error ? "error" as const : "warning" as const,
+                source: diagnostic.source,
+                code: typeof diagnostic.code === "object" ? diagnostic.code.value : diagnostic.code,
+                range: {
+                    startLine: diagnostic.range.start.line + 1,
+                    startColumn: diagnostic.range.start.character + 1,
+                    endLine: diagnostic.range.end.line + 1,
+                    endColumn: diagnostic.range.end.character + 1
+                }
+            } satisfies FileDiagnostic));
+
+        return {
+            path: filePath,
+            diagnostics,
+            count: diagnostics.length
+        };
+    }
+
+    private async findTodos(requestedMaxResults?: number) {
+        const maxResults = Math.min(500, Math.max(1, Math.floor(requestedMaxResults ?? 100)));
+        const listing = await this.safeWorkspace.listFiles({ recursive: true, maxDepth: 10, maxResults: 1000 });
+        const searchableExtensions = new Set([
+            ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".json", ".md",
+            ".py", ".rs", ".go", ".java", ".kt", ".html", ".css", ".scss",
+            ".yml", ".yaml", ".toml", ".sh", ".sql", ".txt"
+        ]);
+        const matches: Array<{ path: string; line: number; marker: string; text: string }> = [];
+        let filesScanned = 0;
+        let scanTruncated = listing.truncated;
+        const todoMarkerPattern = /\b(TODO|FIXME|HACK|XXX)\b/i;
+        for (const file of listing.files) {
+            if (file.type !== "file" || file.size > 1024 * 1024) {continue;}
+            const dot = file.relativePath.lastIndexOf(".");
+            const extension = dot >= 0 ? file.relativePath.slice(dot).toLowerCase() : "";
+            if (!searchableExtensions.has(extension)) {continue;}
+            if (filesScanned >= 500 || matches.length >= maxResults) {
+                scanTruncated = true;
+                break;
+            }
+
+            filesScanned++;
+            try {
+                const result = await this.fileTool.read({ path: file.relativePath });
+                const fileLines = result.content.split(/\r?\n/);
+                for (let index = 0; index < fileLines.length; index++) {
+                    const match = todoMarkerPattern.exec(fileLines[index]);
+                    if (!match) {continue;}
+                    matches.push({
+                        path: file.relativePath,
+                        line: index + 1,
+                        marker: match[1].toUpperCase(),
+                        text: fileLines[index].trim().slice(0, 500)
+                    });
+                    if (matches.length >= maxResults) {
+                        scanTruncated = true;
+                        break;
+                    }
+                }
+            } catch {
+                // Ignore files that disappear or cannot be read during the scan.
+            }
+            if (matches.length >= maxResults) {break;}
+        }
+        return { matches, matchCount: matches.length, filesScanned, truncated: scanTruncated };
+    }
+
     private indexerOptions(args: Record<string, unknown>) {
         const profile: IndexerOptions["profile"] =
             args.profile === "default"
@@ -238,7 +433,7 @@ export class Agent {
         return {
             indexDir: this.optionalString(args, "indexDir"),
             force: args.force === true,
-            json: args.json === true,
+            json: args.json !== false,
             maxFileSize: this.optionalString(args, "maxFileSize"),
             ignore: Array.isArray(args.ignore)
                 ? (args.ignore.filter(v => typeof v === "string") as string[])
@@ -250,7 +445,15 @@ export class Agent {
             memoryLimit: this.optionalNumber(args, "memoryLimit"),
             profile,
             noEmbeddings: args.noEmbeddings === true,
-            verboseMemory: args.verboseMemory === true
+            verboseMemory: args.verboseMemory === true,
+            language: this.optionalString(args, "language"),
+            pattern: this.optionalString(args, "pattern"),
+            limit: this.optionalNumber(args, "limit"),
+            depth: this.optionalNumber(args, "depth"),
+            maxDepth: this.optionalNumber(args, "maxDepth"),
+            maxNodes: this.optionalNumber(args, "maxNodes"),
+            lexical: args.lexical === true,
+            semantic: args.semantic === true
         };
     }
 }

@@ -15,8 +15,7 @@ export class AgentClient {
         this.baseUrl = rawUrl.replace(/\/+$/, "");
         this.authToken =
             options.authToken ||
-            process.env.VORTIQLABS_AGENT_AUTH_TOKEN ||
-            process.env.MCP_AUTH_TOKEN;
+            process.env.VORTIQLABS_AGENT_AUTH_TOKEN;
     }
 
     getBaseUrl(): string {
@@ -38,8 +37,7 @@ export class AgentClient {
 
         const token =
             this.authToken ||
-            process.env.VORTIQLABS_AGENT_AUTH_TOKEN ||
-            process.env.MCP_AUTH_TOKEN;
+            process.env.VORTIQLABS_AGENT_AUTH_TOKEN;
 
         if (token) {
             headers["Authorization"] = `Bearer ${token}`;

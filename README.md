@@ -53,14 +53,10 @@ cp .env.example .env
 Configure environment variables in `.env`:
 - `HOST`: Set to `127.0.0.1` for local development, or `0.0.0.0` inside GitHub Codespaces when remote network access is required.
 - `PORT`: MCP server port (default: `3000`).
-- `MCP_AUTH_TOKEN`: Secure Bearer token used to authenticate incoming requests from ChatGPT/MCP clients.
+- `MCP_ALLOWED_ORIGINS`: Optional comma-separated list of exact browser origins
+  allowed for CORS. Requests without an `Origin` header are supported.
 - `VORTIQLABS_AGENT_URL`: URL of running VS Code extension Agent API (default: `http://127.0.0.1:43127`).
 - `VORTIQLABS_AGENT_AUTH_TOKEN`: Shared secret Bearer token for authenticating MCP requests to the extension Agent.
-
-Generate a secure random secret token:
-```bash
-node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
-```
 
 ### 4. Running the VS Code Extension & MCP Gateway
 
@@ -94,20 +90,20 @@ Follow this workflow to connect ChatGPT to your active workspace inside GitHub C
 4. **Configure Environment**: Ensure `.env` has:
    - `HOST=0.0.0.0`
    - `PORT=3000`
-   - `MCP_AUTH_TOKEN=<your_generated_secret_token>`
    - `VORTIQLABS_AGENT_URL=http://127.0.0.1:43127`
    - `VORTIQLABS_AGENT_AUTH_TOKEN=<your_shared_agent_token>`
-5. **Start Gateway**: Run `npm run mcp:dev` or `npm run mcp:start`.
+5. **Start Gateway**: The VS Code extension starts the MCP gateway automatically
+   after its local Agent API is ready. To run it separately without the
+   extension, use `npm run mcp:dev` or `npm run mcp:start` (do not run both
+   gateways on the same port).
 6. **Forward Port**:
    - Go to the **Ports** tab in Codespaces.
    - Forward port `3000`.
-   - Set Port Visibility to **Public** (or **Private** with authenticated proxy).
+   - Set Port Visibility to **Public** (or **Private** with an authenticated proxy).
    - Copy the Forwarded Address URL (e.g. `https://<codespace-id>-3000.app.github.dev`).
 7. **Connect ChatGPT**:
    - Exact MCP connection endpoint URL to configure in ChatGPT:
      `https://<codespace-id>-3000.app.github.dev/mcp`
-   - Authentication method: **Bearer Token**
-   - Token value: `<your_mcp_auth_token>`
 8. **Invoke Tools**: Trigger MCP tools (`list_workspace_files`, `read_file`, `write_file`, `edit_file`, etc.) and verify that edits execute through the running VS Code extension Agent against your workspace.
 
 > **Note**: The VS Code Extension must be running for workspace operations to succeed. If the extension is stopped, MCP tool calls will clearly fail with an error stating that the extension must be active.
@@ -118,7 +114,7 @@ Follow this workflow to connect ChatGPT to your active workspace inside GitHub C
 
 | Tool Name | Description |
 |---|---|
-| `ping` | Returns server health, version (`0.1.0`), uptime, and timestamp. |
+| `ping` | Returns server health, version (`0.2.0`), uptime, and timestamp. |
 | `workspace_info` | Returns active workspace information via VS Code extension Agent API. |
 | `list_workspace_files` | Lists files and directories via VS Code extension Agent API. |
 | `read_file` | Reads workspace file contents via VS Code extension Agent API. |
@@ -127,10 +123,29 @@ Follow this workflow to connect ChatGPT to your active workspace inside GitHub C
 | `git_status` | Returns Git branch and working tree status via VS Code extension Agent API. |
 | `git_diff` | Returns working-tree git diff via VS Code extension Agent API. |
 | `git_apply_patch` | Applies unified git patch via VS Code extension Agent API. |
+| `run_terminal` | Executes a complete non-interactive command from the workspace root. Use it for tests, builds, linters, and Git inspection; inspect stdout, stderr, and the exit code. Defaults to 30 seconds and is capped at 120 seconds. |
+| `file_diagnostics` | Returns every current VS Code error and warning for one workspace-relative file, including severity, message, source/code, and 1-based ranges. Use it after editing or when validating a file. |
+| `indexer_install` | Lazily downloads the pinned Codebase Indexer runtime for the current OS/architecture, verifies SHA-256, and reuses the cached install. |
 | `indexer_status` | Inspects Codebase Indexer status via VS Code extension Agent API. |
-| `indexer_search` | Searches codebase index via VS Code extension Agent API. |
-| `indexer_symbols` | Retrieves symbol information via VS Code extension Agent API. |
-| `index_workspace` | Indexes authorized workspace via VS Code extension Agent API. |
+| `indexer_search` | Hybrid, lexical, or semantic search with a result limit. |
+| `indexer_symbols` | Finds indexed symbol definitions. |
+| `indexer_references` | Finds symbol references. |
+| `indexer_callers` / `indexer_callees` | Explores caller and callee relationships. |
+| `indexer_dependencies` / `indexer_dependents` | Explores dependency graph edges with bounded depth. |
+| `indexer_symbol_path` | Finds a bounded path between two symbols. |
+| `indexer_files` | Lists indexed files with optional language/path filters. |
+| `indexer_repository_map` | Summarizes repository areas and indexed structure. |
+| `indexer_api_endpoints` | Detects indexed API endpoint definitions. |
+| `indexer_classify_query` | Classifies a natural-language codebase question. |
+| `indexer_sensitive_regions` | Detects likely sensitive regions with heuristic/redacted reporting. |
+| `indexer_index_github` | Indexes a GitHub repository, optionally at a selected ref. |
+| `indexer_inspect` | Reads metadata from an existing binary index file. |
+| `indexer_remove` | Removes an index after explicit `confirm=true`; source files are not deleted. |
+| `indexer_watch` / `indexer_stop_watch` | Starts or stops incremental watch mode. |
+| `indexer_dashboard` / `indexer_stop_dashboard` | Starts or stops the local-only web dashboard. |
+| `index_workspace` | Indexes the active workspace or a validated subdirectory, with size/worker/profile options. |
+
+The standalone runtime is pinned to Codebase Indexer `0.1.7` and downloaded on first indexer use (or by calling `indexer_install`). It is stored under the extension's global storage, by version and platform, so it is not bundled into the VSIX. The runtime downloads are checksum-verified against the release artifact SHA-256 values. Supported targets are Linux x64/ARM64, macOS x64/ARM64, and Windows x64/ARM64.
 
 ---
 
@@ -138,8 +153,7 @@ Follow this workflow to connect ChatGPT to your active workspace inside GitHub C
 
 - **Extension Layer Authorization**: Every workspace operation is validated and executed by the VS Code extension Agent.
 - **Loopback Binding**: Extension Agent API is strictly bound to `127.0.0.1:43127` loopback.
-- **Shared Secret Authentication**: MCP server authenticates to Agent API via `Authorization: Bearer <token>`.
-- **Remote Access Controls**: External MCP endpoint requires constant-time Bearer token verification and validates origin headers to defend against DNS rebinding.
+- **MCP Gateway Authentication**: Disabled for the public MCP endpoint. The loopback extension Agent remains protected by `VORTIQLABS_AGENT_AUTH_TOKEN`..
 - **Path Traversal Protection**: Enforces canonical path verification (`realpath`) to block `../` traversal or symlink escapes.
 - **Graceful Shutdown**: Stopping the extension cleanly stops its local Agent server.
 

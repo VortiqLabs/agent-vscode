@@ -3,14 +3,16 @@ import * as crypto from "crypto";
 import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import type { ZodRawShapeCompat } from "@modelcontextprotocol/sdk/server/zod-compat.js";
 
-import { authenticateHttpRequest } from "./auth";
+import { validateOrigin } from "./auth";
 import { AgentClient } from "./agent-client";
+import type { AgentToolName } from "../agent/types";
 
 export interface McpServerOptions {
     host?: string;
     port?: number;
-    authToken?: string;
     workspaceRoot?: string;
     allowedOrigins?: string[];
     agentUrl?: string;
@@ -20,24 +22,27 @@ export interface McpServerOptions {
 export class VortiqMcpServer {
     private readonly host: string;
     private readonly port: number;
-    private readonly authToken?: string;
     private readonly workspaceRoot: string;
     private readonly allowedOrigins?: string[];
     private readonly agentClient: AgentClient;
 
     private httpServer: http.Server | null = null;
-    private mcpServer: McpServer | null = null;
+    private readonly sessions = new Map<
+        string,
+        { server: McpServer; transport: StreamableHTTPServerTransport }
+    >();
 
     constructor(options: McpServerOptions = {}) {
         this.host = options.host || process.env.HOST || "127.0.0.1";
         this.port = options.port || (process.env.PORT ? parseInt(process.env.PORT, 10) : 3000);
-        this.authToken = options.authToken || process.env.MCP_AUTH_TOKEN;
         this.workspaceRoot = options.workspaceRoot || process.env.MCP_WORKSPACE_ROOT || process.cwd();
-        this.allowedOrigins = options.allowedOrigins;
+        this.allowedOrigins =
+            options.allowedOrigins ||
+            process.env.MCP_ALLOWED_ORIGINS?.split(",").map(origin => origin.trim()).filter(Boolean);
 
         this.agentClient = new AgentClient({
             baseUrl: options.agentUrl,
-            authToken: options.agentAuthToken || this.authToken
+            authToken: options.agentAuthToken
         });
     }
 
@@ -72,7 +77,7 @@ export class VortiqMcpServer {
                                 {
                                     status: "ok",
                                     service: "VortiqLabs Agent MCP Server",
-                                    version: "0.1.0",
+                                    version: "0.2.0",
                                     uptimeSeconds: Math.floor(process.uptime()),
                                     timestamp: new Date().toISOString()
                                 },
@@ -352,7 +357,71 @@ export class VortiqMcpServer {
             }
         );
 
-        // 10. indexer_status
+        // Find TODO-style markers in the active workspace.
+        server.tool(
+            "find_todos",
+            "Finds TODO, FIXME, HACK, and XXX markers in supported text files across the active VS Code workspace. Returns file paths and line numbers; scanning is bounded for safety.",
+            {
+                maxResults: z.number().int().positive().max(500).optional().describe("Maximum matching lines to return (default 100, maximum 500)")
+            },
+            async args => {
+                try {
+                    const result = await this.agentClient.sendRequest("workspace.find_todos", args);
+                    return {
+                        content: [{ type: "text", text: JSON.stringify(result, null, 2) }]
+                    };
+                } catch (error) {
+                    return {
+                        isError: true,
+                        content: [{
+                            type: "text",
+                            text: `Error finding TODO markers: ${error instanceof Error ? error.message : String(error)}`
+                        }]
+                    };
+                }
+            }
+        );
+
+        server.tool(
+            "run_terminal",
+            "Execute a shell command from the active workspace root. Use this for commands such as tests, builds, linters, and Git inspection. Always provide a complete non-interactive command; do not use commands that require user input or leave a long-running process running. The command runs with a 30-second default timeout and a 120-second maximum timeout. A non-zero exit code is returned as a normal result so you can inspect stdout and stderr.",
+            {
+                command: z.string().min(1).describe("Complete non-interactive shell command to run from the workspace root"),
+                timeoutMs: z.number().int().min(1000).max(120000).optional().describe("Optional timeout in milliseconds; defaults to 30000 and is capped at 120000")
+            },
+            async args => {
+                try {
+                    const result = await this.agentClient.sendRequest("terminal.execute", args);
+                    return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+                } catch (error) {
+                    return {
+                        isError: true,
+                        content: [{ type: "text", text: `Error running terminal command: ${error instanceof Error ? error.message : String(error)}` }]
+                    };
+                }
+            }
+        );
+
+        server.tool(
+            "file_diagnostics",
+            "Get every current VS Code error and warning for exactly one workspace file. Use this after editing or when validating a file. Provide a workspace-relative path, then inspect the returned severity, message, source/code, and 1-based range for each diagnostic. Informational and hint diagnostics are intentionally excluded.",
+            {
+                path: z.string().min(1).describe("Workspace-relative path of the file to inspect, for example src/index.ts")
+            },
+            async args => {
+                try {
+                    const result = await this.agentClient.sendRequest("file.diagnostics", args);
+                    return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+                } catch (error) {
+                    return {
+                        isError: true,
+                        content: [{ type: "text", text: `Error getting file diagnostics: ${error instanceof Error ? error.message : String(error)}` }]
+                    };
+                }
+            }
+        );
+
+        // 12. indexer_status
         server.tool(
             "indexer_status",
             "Inspects Codebase Indexer status via VS Code extension Agent.",
@@ -387,11 +456,18 @@ export class VortiqMcpServer {
             "indexer_search",
             "Searches codebase index via VS Code extension Agent.",
             {
-                query: z.string().describe("Search query string")
+                query: z.string().min(1).describe("Text or concept to search for in the indexed codebase"),
+                limit: z.number().int().min(1).max(100).optional().describe("Maximum results, between 1 and 100"),
+                mode: z.enum(["hybrid", "lexical", "semantic"]).optional().describe("Search strategy; hybrid is the default")
             },
             async args => {
                 try {
-                    const result = await this.agentClient.sendRequest("indexer.search", { query: args.query });
+                    const result = await this.agentClient.sendRequest("indexer.search", {
+                        query: args.query,
+                        limit: args.limit,
+                        lexical: args.mode === "lexical",
+                        semantic: args.mode === "semantic"
+                    });
                     return {
                         content: [
                             {
@@ -451,15 +527,20 @@ export class VortiqMcpServer {
             "index_workspace",
             "Indexes authorized workspace via VS Code extension Agent.",
             {
-                path: z.string().optional().describe("Optional subdirectory path to index inside workspace"),
-                force: z.boolean().optional().describe("Force re-indexing")
+                path: z.string().optional().describe("Optional workspace-relative subdirectory to index"),
+                force: z.boolean().optional().describe("Force a full re-index"),
+                indexDir: z.string().optional().describe("Optional directory for storing index files"),
+                maxFileSize: z.string().optional().describe("Maximum source file size, e.g. 5mb"),
+                ignore: z.array(z.string()).max(100).optional().describe("Additional ignore patterns"),
+                workers: z.number().int().min(1).max(16).optional().describe("Parser worker count (1–16)"),
+                memoryLimit: z.number().int().min(256).max(65536).optional().describe("Memory limit in MB (256–65536)"),
+                profile: z.enum(["default", "large"]).optional().describe("Indexing profile for normal or large codebases"),
+                noEmbeddings: z.boolean().optional().describe("Disable vector embeddings"),
+                verboseMemory: z.boolean().optional().describe("Log memory usage during large index runs")
             },
             async args => {
                 try {
-                    const result = await this.agentClient.sendRequest("indexer.index", {
-                        path: args.path,
-                        force: args.force
-                    });
+                    const result = await this.agentClient.sendRequest("indexer.index", args as unknown as Record<string, unknown>);
                     return {
                         content: [
                             {
@@ -481,6 +562,200 @@ export class VortiqMcpServer {
                 }
             }
         );
+
+        this.registerAdvancedIndexerTools(server);
+    }
+
+    private registerAdvancedIndexerTools(server: McpServer): void {
+        this.registerForwardingTool(
+            server,
+            "indexer_install",
+            "Download and install the pinned Codebase Indexer runtime for this OS/architecture, verify its SHA-256, and reuse the cached installation on subsequent calls.",
+            {},
+            "indexer.install"
+        );
+        this.registerForwardingTool(
+            server,
+            "indexer_index_github",
+            "Download and index a GitHub repository using the Codebase Indexer runtime. Provide owner/repository or a GitHub URL; private repositories require GITHUB_TOKEN or GH_TOKEN in the extension environment.",
+            {
+                repository: z.string().min(3).describe("GitHub owner/repository slug or repository URL"),
+                ref: z.string().optional().describe("Git branch, tag, or commit; defaults to HEAD"),
+                indexDir: z.string().optional().describe("Optional directory for storing the index"),
+                force: z.boolean().optional().describe("Force re-indexing of the repository"),
+                workers: z.number().int().min(1).max(16).optional().describe("Parser worker count (1–16)"),
+                memoryLimit: z.number().int().min(256).max(65536).optional().describe("Memory limit in MB (256–65536)"),
+                profile: z.enum(["default", "large"]).optional().describe("Indexing profile for normal or large codebases"),
+                noEmbeddings: z.boolean().optional().describe("Disable vector embeddings")
+            },
+            "indexer.index_github"
+        );
+        this.registerForwardingTool(
+            server,
+            "indexer_inspect",
+            "Read and validate metadata from a Codebase Indexer .index file. Use the index path returned by indexer_status or index_workspace.",
+            { path: z.string().min(1).describe("Path to an existing Codebase Indexer .index file") },
+            "indexer.inspect"
+        );
+        this.registerForwardingTool(
+            server,
+            "indexer_remove",
+            "Delete the Codebase Indexer index for the specified workspace directory. This does not delete source files. Requires confirm=true; prefer the active workspace or a validated workspace-relative path.",
+            {
+                path: z.string().optional().describe("Workspace-relative path for the indexed workspace; defaults to the active workspace"),
+                confirm: z.literal(true).describe("Must be true to confirm permanent deletion of this workspace's index")
+            },
+            "indexer.remove"
+        );
+        this.registerForwardingTool(
+            server,
+            "indexer_references",
+            "Find references to a symbol in the active workspace's Codebase Indexer index.",
+            { query: z.string().min(1).describe("Symbol name") },
+            "indexer.references"
+        );
+        this.registerForwardingTool(
+            server,
+            "indexer_callers",
+            "Find functions or symbols that call the specified symbol.",
+            { query: z.string().min(1).describe("Target symbol name") },
+            "indexer.callers"
+        );
+        this.registerForwardingTool(
+            server,
+            "indexer_callees",
+            "Find functions or symbols called by the specified symbol.",
+            { query: z.string().min(1).describe("Source symbol name") },
+            "indexer.callees"
+        );
+        this.registerForwardingTool(
+            server,
+            "indexer_dependencies",
+            "Explore outgoing dependency relations for a symbol, with a bounded graph depth.",
+            {
+                query: z.string().min(1).describe("Symbol name"),
+                depth: z.number().int().min(1).max(12).optional().describe("Graph traversal depth (default 1; maximum 12)")
+            },
+            "indexer.dependencies"
+        );
+        this.registerForwardingTool(
+            server,
+            "indexer_dependents",
+            "Find symbols that depend on or use the requested symbol, with a bounded graph depth.",
+            {
+                query: z.string().min(1).describe("Symbol name"),
+                depth: z.number().int().min(1).max(12).optional().describe("Graph traversal depth (default 1; maximum 12)")
+            },
+            "indexer.dependents"
+        );
+        this.registerForwardingTool(
+            server,
+            "indexer_symbol_path",
+            "Find a bounded dependency path between two symbol names in the indexed codebase.",
+            {
+                from: z.string().min(1).describe("Starting symbol"),
+                to: z.string().min(1).describe("Target symbol"),
+                maxDepth: z.number().int().min(1).max(12).optional().describe("Maximum traversal depth (default 4)"),
+                maxNodes: z.number().int().min(1).max(200).optional().describe("Maximum graph nodes to visit (default 32)")
+            },
+            "indexer.path"
+        );
+        this.registerForwardingTool(
+            server,
+            "indexer_files",
+            "List indexed files in the active workspace, optionally filtered by language or path substring.",
+            {
+                language: z.string().optional().describe("Language identifier, e.g. TypeScript or Python"),
+                pattern: z.string().optional().describe("Substring to match in file paths")
+            },
+            "indexer.files"
+        );
+        this.registerForwardingTool(
+            server,
+            "indexer_repository_map",
+            "Return a high-level map of repository areas, files, and indexed symbols.",
+            {},
+            "indexer.repository_map"
+        );
+        this.registerForwardingTool(
+            server,
+            "indexer_api_endpoints",
+            "Discover API endpoint definitions detected in the indexed workspace.",
+            {},
+            "indexer.api_endpoints"
+        );
+        this.registerForwardingTool(
+            server,
+            "indexer_classify_query",
+            "Classify a codebase question by likely query intent, helping choose the right search approach.",
+            { query: z.string().min(1).describe("Natural-language question about the codebase") },
+            "indexer.classify_query"
+        );
+        this.registerForwardingTool(
+            server,
+            "indexer_sensitive_regions",
+            "Scan the indexed workspace for likely sensitive regions such as credentials or tokens. The detector is heuristic; verify results and do not expose secrets in responses.",
+            {},
+            "indexer.sensitive_regions"
+        );
+        this.registerForwardingTool(
+            server,
+            "indexer_watch",
+            "Start an incremental Codebase Indexer watch process for the active workspace or a safe workspace-relative subdirectory. Use indexer_stop_watch when finished.",
+            { path: z.string().optional().describe("Optional workspace-relative directory to watch") },
+            "indexer.watch"
+        );
+        this.registerForwardingTool(
+            server,
+            "indexer_stop_watch",
+            "Stop the watch process started by this extension instance.",
+            {},
+            "indexer.stop_watch"
+        );
+        this.registerForwardingTool(
+            server,
+            "indexer_dashboard",
+            "Start the Codebase Indexer web dashboard on localhost. Use indexer_stop_dashboard when finished.",
+            {
+                host: z.enum(["127.0.0.1", "localhost"]).optional().describe("Local-only bind host; defaults to 127.0.0.1"),
+                port: z.number().int().min(0).max(65535).optional().describe("Port; defaults to 4173"),
+                indexDir: z.string().optional().describe("Optional index storage directory")
+            },
+            "indexer.dashboard"
+        );
+        this.registerForwardingTool(
+            server,
+            "indexer_stop_dashboard",
+            "Stop the dashboard process started by this extension instance.",
+            {},
+            "indexer.stop_dashboard"
+        );
+    }
+
+    private registerForwardingTool(
+        server: McpServer,
+        name: string,
+        description: string,
+        schema: ZodRawShapeCompat,
+        agentTool: AgentToolName
+    ): void {
+        server.tool(name, description, schema, async (args): Promise<CallToolResult> => {
+            try {
+                const result = await this.agentClient.sendRequest(
+                    agentTool,
+                    args as unknown as Record<string, unknown>
+                );
+                return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
+            } catch (error) {
+                return {
+                    isError: true,
+                    content: [{
+                        type: "text" as const,
+                        text: `${name} failed: ${error instanceof Error ? error.message : String(error)}`
+                    }]
+                };
+            }
+        });
     }
 
     async start(): Promise<void> {
@@ -488,29 +763,22 @@ export class VortiqMcpServer {
             return;
         }
 
-        const mcpServer = new McpServer({
-            name: "VortiqLabs Agent MCP Server",
-            version: "0.1.0"
-        });
-
-        this.setupTools(mcpServer);
-        this.mcpServer = mcpServer;
-
-        const transport = new StreamableHTTPServerTransport({
-            sessionIdGenerator: () => crypto.randomUUID()
-        });
-
-        await mcpServer.connect(transport);
-
         this.httpServer = http.createServer(async (req, res) => {
             try {
-                // Set CORS headers
-                const origin = req.headers.origin || "*";
-                res.setHeader("Access-Control-Allow-Origin", origin);
+                const origin = req.headers.origin;
+                if (origin && validateOrigin(origin, this.allowedOrigins)) {
+                    res.setHeader("Access-Control-Allow-Origin", origin);
+                    res.setHeader("Vary", "Origin");
+                }
                 res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-                res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+                res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, Mcp-Session-Id, MCP-Protocol-Version");
 
                 if (req.method === "OPTIONS") {
+                    if (!validateOrigin(req.headers.origin, this.allowedOrigins)) {
+                        res.writeHead(403, { "Content-Type": "application/json; charset=utf-8" });
+                        res.end(JSON.stringify({ error: "Forbidden: Origin not allowed." }));
+                        return;
+                    }
                     res.writeHead(204);
                     res.end();
                     return;
@@ -519,11 +787,51 @@ export class VortiqMcpServer {
                 const url = new URL(req.url || "/", `http://${req.headers.host || "127.0.0.1"}`);
 
                 if (url.pathname === "/mcp" || url.pathname.startsWith("/mcp/")) {
-                    if (!authenticateHttpRequest(req, res, this.authToken, this.allowedOrigins)) {
+                    const sessionId = req.headers["mcp-session-id"];
+                    if (Array.isArray(sessionId)) {
+                        res.writeHead(400, { "Content-Type": "application/json; charset=utf-8" });
+                        res.end(JSON.stringify({ error: "Invalid MCP session ID header." }));
                         return;
                     }
 
-                    await transport.handleRequest(req, res);
+                    let session = sessionId ? this.sessions.get(sessionId) : undefined;
+                    if (sessionId && !session) {
+                        res.writeHead(404, { "Content-Type": "application/json; charset=utf-8" });
+                        res.end(JSON.stringify({ error: "MCP session not found." }));
+                        return;
+                    }
+
+                    if (!session) {
+                        const server = new McpServer(
+                            {
+                                name: "VortiqLabs Agent MCP Server",
+                                version: "0.2.0"
+                            },
+                            {
+                                instructions:
+                                    "Before using workspace-specific context or prior memories, call workspace_info and read the active workspace ID. Reuse a prior memory only when it explicitly records the exact same workspace ID. If the memory has no workspace ID, the IDs differ, or the active ID cannot be verified, ignore that memory for this workspace. Never infer a match from the workspace name or path alone."
+                            }
+                        );
+                        this.setupTools(server);
+                        const transport = new StreamableHTTPServerTransport({
+                            sessionIdGenerator: () => crypto.randomUUID()
+                        });
+                        transport.onclose = () => {
+                            const closedSessionId = transport.sessionId;
+                            if (closedSessionId) {
+                                this.sessions.delete(closedSessionId);
+                            }
+                        };
+                        await server.connect(transport);
+                        session = { server, transport };
+                    }
+
+                    await session.transport.handleRequest(req, res);
+
+                    const initializedSessionId = session.transport.sessionId;
+                    if (!sessionId && initializedSessionId) {
+                        this.sessions.set(initializedSessionId, session);
+                    }
                     return;
                 }
 
@@ -533,7 +841,7 @@ export class VortiqMcpServer {
                         JSON.stringify({
                             status: "ok",
                             service: "vortiqlabs-agent-mcp",
-                            version: "0.1.0"
+                            version: "0.2.0"
                         })
                     );
                     return;
@@ -563,7 +871,7 @@ export class VortiqMcpServer {
                     `Listening on http://${this.host}:${this.port}/mcp\n` +
                     `Extension Agent API URL: ${this.agentClient.getBaseUrl()}\n` +
                     `Workspace Root: ${this.workspaceRoot}\n` +
-                    `Authentication: ${this.authToken ? "Bearer token enabled" : "Unauthenticated (Local mode only)"}\n`
+                    `MCP authentication: disabled\n`
                 );
                 resolve();
             };
@@ -581,6 +889,14 @@ export class VortiqMcpServer {
 
         const server = this.httpServer;
         this.httpServer = null;
+
+        await Promise.all(
+            [...this.sessions.values()].map(async session => {
+                await session.transport.close();
+                await session.server.close();
+            })
+        );
+        this.sessions.clear();
 
         await new Promise<void>((resolve, reject) => {
             server.close(err => {

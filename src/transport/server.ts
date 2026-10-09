@@ -47,8 +47,7 @@ export class AgentServer {
 
         this.authToken =
             options.authToken ??
-            process.env.VORTIQLABS_AGENT_AUTH_TOKEN ??
-            process.env.MCP_AUTH_TOKEN;
+            process.env.VORTIQLABS_AGENT_AUTH_TOKEN;
     }
 
     async start(): Promise<void> {

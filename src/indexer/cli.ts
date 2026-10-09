@@ -13,6 +13,42 @@ export class IndexerCLI {
             IndexerExecutable
     ) {}
 
+    async ensureRuntime() {
+        return this.executable.getRuntimeInfo();
+    }
+
+    async stopBackground(command: "watch" | "dashboard"): Promise<IndexerResult> {
+        return this.executable.stopBackground(command);
+    }
+
+    async dependencies(query: string, options?: IndexerOptions): Promise<IndexerResult> {
+        return this.executable.run({ command: "deps", argument: query, options });
+    }
+
+    async dependents(query: string, options?: IndexerOptions): Promise<IndexerResult> {
+        return this.executable.run({ command: "dependents", argument: query, options });
+    }
+
+    async symbolPath(from: string, to: string, options?: IndexerOptions): Promise<IndexerResult> {
+        return this.executable.run({ command: "path", arguments: [from, to], options });
+    }
+
+    async repositoryMap(options?: IndexerOptions): Promise<IndexerResult> {
+        return this.executable.run({ command: "map", options });
+    }
+
+    async apiEndpoints(options?: IndexerOptions): Promise<IndexerResult> {
+        return this.executable.run({ command: "api", options });
+    }
+
+    async classifyQuery(query: string, options?: IndexerOptions): Promise<IndexerResult> {
+        return this.executable.run({ command: "intent", argument: query, options });
+    }
+
+    async sensitiveRegions(options?: IndexerOptions): Promise<IndexerResult> {
+        return this.executable.run({ command: "sensitive", options });
+    }
+
     async index(
         path?: string,
         options?: IndexerOptions
@@ -100,12 +136,10 @@ export class IndexerCLI {
     }
 
     async files(
-        query?: string,
         options?: IndexerOptions
     ): Promise<IndexerResult> {
         return this.executable.run({
             command: "files",
-            argument: query,
             options
         });
     }

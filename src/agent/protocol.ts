@@ -6,12 +6,16 @@ import {
 const VALID_TOOLS: readonly AgentToolName[] = [
     "workspace.get",
     "workspace.list_files",
+    "workspace.find_todos",
+    "terminal.execute",
+    "file.diagnostics",
     "file.read",
     "file.write",
     "file.replace_range",
     "git.status",
     "git.diff",
     "git.apply_patch",
+    "indexer.install",
     "indexer.index",
     "indexer.index_github",
     "indexer.status",
@@ -20,11 +24,20 @@ const VALID_TOOLS: readonly AgentToolName[] = [
     "indexer.references",
     "indexer.callers",
     "indexer.callees",
+    "indexer.dependencies",
+    "indexer.dependents",
+    "indexer.path",
     "indexer.files",
+    "indexer.repository_map",
+    "indexer.api_endpoints",
+    "indexer.classify_query",
+    "indexer.sensitive_regions",
     "indexer.inspect",
     "indexer.remove",
     "indexer.watch",
-    "indexer.dashboard"
+    "indexer.stop_watch",
+    "indexer.dashboard",
+    "indexer.stop_dashboard"
 ];
 
 export function parseAgentRequest(
