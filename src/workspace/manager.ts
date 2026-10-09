@@ -1,101 +1,111 @@
-import * as vscode from "vscode";
 import { randomUUID } from "crypto";
-import {
-    VortiqWorkspace,
-    WorkspaceFolder,
-    WorkspaceState
-} from "./types";
+import * as path from "path";
+import * as fs from "fs";
+import { VortiqWorkspace, WorkspaceFolder, WorkspaceState } from "./types";
 
 export class WorkspaceManager {
     private workspaceId: string | null = null;
     private state: WorkspaceState = "none";
+    private standaloneRoot: string | null = null;
 
     constructor(
-        private readonly context: vscode.ExtensionContext
+        private readonly context?: any,
+        explicitRoot?: string
     ) {
+        if (explicitRoot) {
+            this.standaloneRoot = path.resolve(explicitRoot);
+        } else if (process.env.MCP_WORKSPACE_ROOT) {
+            this.standaloneRoot = path.resolve(process.env.MCP_WORKSPACE_ROOT);
+        }
+
         this.initialize();
 
-        const workspaceFolderListener =
-            vscode.workspace.onDidChangeWorkspaceFolders(() => {
-                this.refresh();
-            });
-
-        context.subscriptions.push(workspaceFolderListener);
+        if (this.context) {
+            try {
+                const vscode = require("vscode");
+                if (vscode.workspace?.onDidChangeWorkspaceFolders) {
+                    const listener = vscode.workspace.onDidChangeWorkspaceFolders(() => {
+                        this.refresh();
+                    });
+                    this.context.subscriptions.push(listener);
+                }
+            } catch {
+                // Not running in VS Code context
+            }
+        }
     }
 
     private initialize(): void {
-        const folders = vscode.workspace.workspaceFolders;
-
-        if (!folders?.length) {
-            this.state = "none";
-            return;
+        let hasFolders = false;
+        if (this.context) {
+            try {
+                const vscode = require("vscode");
+                const folders = vscode.workspace?.workspaceFolders;
+                if (folders && folders.length > 0) {
+                    hasFolders = true;
+                }
+            } catch {
+                // Ignored
+            }
         }
 
-        let storedId =
-            this.context.workspaceState.get<string>(
-                "vortiqlabs.workspaceId"
-            );
-
-        if (!storedId) {
-            storedId = randomUUID();
-
-            void this.context.workspaceState.update(
-                "vortiqlabs.workspaceId",
-                storedId
-            );
+        if (!hasFolders && !this.standaloneRoot) {
+            this.standaloneRoot = process.cwd();
+            hasFolders = true;
         }
 
-        this.workspaceId = storedId;
+        if (this.context) {
+            let storedId = this.context.workspaceState.get("vortiqlabs.workspaceId");
+            if (!storedId) {
+                storedId = randomUUID();
+                void this.context.workspaceState.update("vortiqlabs.workspaceId", storedId);
+            }
+            this.workspaceId = storedId;
+        } else {
+            this.workspaceId = "standalone-workspace-" + randomUUID().slice(0, 8);
+        }
+
         this.state = "ready";
     }
 
     private refresh(): void {
-        const folders = vscode.workspace.workspaceFolders;
-
-        if (!folders?.length) {
-            this.workspaceId = null;
-            this.state = "none";
-            return;
-        }
-
-        if (!this.workspaceId) {
-            let storedId =
-                this.context.workspaceState.get<string>(
-                    "vortiqlabs.workspaceId"
-                );
-
-            if (!storedId) {
-                storedId = randomUUID();
-
-                void this.context.workspaceState.update(
-                    "vortiqlabs.workspaceId",
-                    storedId
-                );
-            }
-
-            this.workspaceId = storedId;
-        }
-
+        this.initialize();
         this.state = "changed";
     }
 
-    getCurrent(): VortiqWorkspace | null {
-        const folders = vscode.workspace.workspaceFolders;
-
-        if (!folders?.length || !this.workspaceId) {
-            return null;
+    getWorkspaceRootPath(): string {
+        if (this.standaloneRoot) {
+            return this.standaloneRoot;
         }
 
-        const workspaceFolders: WorkspaceFolder[] =
-            folders.map((folder, index) => ({
-                id: `${this.workspaceId}-folder-${index}`,
-                name: folder.name,
+        try {
+            const vscode = require("vscode");
+            const folders = vscode.workspace?.workspaceFolders;
+            if (folders && folders.length > 0) {
+                return folders[0].uri.fsPath;
+            }
+        } catch {
+            // Ignored
+        }
+
+        return process.cwd();
+    }
+
+    getCurrent(): VortiqWorkspace | null {
+        const rootPath = this.getWorkspaceRootPath();
+        const folderName = path.basename(rootPath) || "Workspace";
+
+        const workspaceFolders: WorkspaceFolder[] = [
+            {
+                id: `${this.workspaceId ?? "ws"}-folder-0`,
+                name: folderName,
                 relativePath: "."
-            }));
+            }
+        ];
 
         return {
-            id: this.workspaceId,
-            name: vscode.workspace.name ?? null,
+            id: this.workspaceId ?? "standalone-workspace",
+            name: folderName,
             folders: workspaceFolders,
             state: this.state
         };
@@ -109,27 +119,20 @@ export class WorkspaceManager {
         return this.state;
     }
 
-    getRoots(): readonly vscode.Uri[] {
-        return vscode.workspace.workspaceFolders?.map(
-            folder => folder.uri
-        ) ?? [];
-    }
-
-    resolvePath(relativePath: string): vscode.Uri | null {
+    resolvePath(relativePath: string): string | null {
         if (!relativePath || relativePath.trim() === "") {
             return null;
         }
 
+        const normalizedPath = relativePath.replace(/\\/g, "/");
+
+        // Reject absolute paths supplied as relative arguments
         if (
-            relativePath.startsWith("/") ||
-            relativePath.startsWith("\\") ||
-            /^[a-zA-Z]:[\\/]/.test(relativePath)
+            normalizedPath.startsWith("/") ||
+            /^[a-zA-Z]:[\\/]/.test(normalizedPath)
         ) {
             return null;
         }
-
-        const normalizedPath = relativePath
-            .replace(/\\/g, "/");
 
         if (
             normalizedPath === ".." ||
@@ -139,34 +142,30 @@ export class WorkspaceManager {
             return null;
         }
 
-        const folders = vscode.workspace.workspaceFolders;
+        const root = this.getWorkspaceRootPath();
+        const candidate = path.resolve(root, normalizedPath);
 
-        if (!folders?.length) {
+        // Check canonical path to prevent symlink traversal
+        let canonicalRoot: string;
+        try {
+            canonicalRoot = fs.realpathSync(root);
+        } catch {
+            canonicalRoot = path.resolve(root);
+        }
+
+        let canonicalCandidate: string;
+        try {
+            canonicalCandidate = fs.realpathSync(candidate);
+        } catch {
+            // File might not exist yet (e.g. write)
+            canonicalCandidate = path.resolve(candidate);
+        }
+
+        const relative = path.relative(canonicalRoot, canonicalCandidate);
+        if (relative.startsWith("..") || path.isAbsolute(relative)) {
             return null;
         }
 
-        for (const folder of folders) {
-            const candidate = vscode.Uri.joinPath(
-                folder.uri,
-                ...normalizedPath.split("/")
-            );
-
-            const relative = vscode.workspace.asRelativePath(
-                candidate,
-                false
-            ).replace(/\\/g, "/");
-
-            if (
-                relative === normalizedPath ||
-                (
-                    !relative.startsWith("../") &&
-                    relative !== ".."
-                )
-            ) {
-                return candidate;
-            }
-        }
-
-        return null;
+        return candidate;
     }
 }

@@ -6,13 +6,11 @@ export class IndexerService {
     readonly cli: IndexerCLI;
 
     constructor(
-        runtimeManager: IndexerRuntimeManager
+        runtimeManager: IndexerRuntimeManager,
+        explicitWorkspaceRoot?: string
     ) {
-        this.cli =
-            new IndexerCLI(
-                new IndexerExecutable(
-                    runtimeManager
-                )
-            );
+        this.cli = new IndexerCLI(
+            new IndexerExecutable(runtimeManager, explicitWorkspaceRoot)
+        );
     }
 }
