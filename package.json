@@ -14,24 +14,26 @@
   "contributes": {
     "commands": [
       {
-  "command": "vortiqlabs-agent.workspace",
-  "title": "VortiqLabs: Show Workspace"
-},
-{
+        "command": "vortiqlabs-agent.workspace",
+        "title": "VortiqLabs: Show Workspace"
+      },
+      {
         "command": "vortiqlabs-agent.fileRead",
         "title": "VortiqLabs: Read File"
-    },
-    {
-    "command": "vortiqlabs-agent.fileWrite",
-    "title": "VortiqLabs: Write File"
-},
-{
-    "command": "vortiqlabs-agent.fileEdit",
-    "title": "VortiqLabs: Edit File"
-}
+      },
+      {
+        "command": "vortiqlabs-agent.fileWrite",
+        "title": "VortiqLabs: Write File"
+      },
+      {
+        "command": "vortiqlabs-agent.fileEdit",
+        "title": "VortiqLabs: Edit File"
+      }
     ]
   },
   "scripts": {
+    "mcp:dev": "npm run check-types && node esbuild.js && node dist/mcp.js",
+    "mcp:start": "node dist/mcp.js",
     "vscode:prepublish": "npm run package",
     "compile": "npm run check-types && npm run lint && node esbuild.js",
     "watch": "npm-run-all -p watch:*",
@@ -43,22 +45,27 @@
     "pretest": "npm run compile-tests && npm run compile && npm run lint",
     "check-types": "tsc --noEmit",
     "lint": "eslint src",
-    "test": "vscode-test"
+    "test": "npm run test:unit",
+    "test:unit": "npm run compile-tests && node --test out/test/**/*.test.js"
   },
   "devDependencies": {
-    "@types/vscode": "^1.140.0",
     "@types/mocha": "^10.0.10",
     "@types/node": "24.x",
-    "typescript-eslint": "^8.61.1",
-    "eslint": "^10.5.0",
+    "@types/vscode": "^1.140.0",
+    "@vscode/test-cli": "^0.0.15",
+    "@vscode/test-electron": "^3.0.0",
     "esbuild": "^0.28.1",
+    "eslint": "^10.5.0",
     "npm-run-all": "^4.1.5",
     "typescript": "^6.0.3",
-    "@vscode/test-cli": "^0.0.15",
-    "@vscode/test-electron": "^3.0.0"
+    "typescript-eslint": "^8.61.1"
   },
   "overrides": {
     "diff": "^8.0.4",
-    "serialize-javascript": "^7.0.6"
+    "serialize-javascript": "^7.0.6",
+    "express": "5.2.1"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.1"
   }
 }

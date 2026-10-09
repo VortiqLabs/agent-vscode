@@ -1,231 +1,124 @@
 import { spawn } from "child_process";
-import * as vscode from "vscode";
-
-import {
-    IndexerRequest,
-    IndexerResult
-} from "./types";
-
-import {
-    IndexerRuntimeManager
-} from "./runtime/manager";
+import { IndexerRequest, IndexerResult } from "./types";
+import { IndexerRuntimeManager } from "./runtime/manager";
 
 export class IndexerExecutable {
     constructor(
-        private readonly runtimeManager:
-            IndexerRuntimeManager
+        private readonly runtimeManager: IndexerRuntimeManager,
+        private readonly explicitWorkspaceRoot?: string
     ) {}
 
-    async run(
-        request: IndexerRequest
-    ): Promise<IndexerResult> {
-        const runtime =
-            await this.runtimeManager.resolve();
+    async run(request: IndexerRequest): Promise<IndexerResult> {
+        const runtime = await this.runtimeManager.resolve();
+        const args = this.buildArguments(request);
+        const cwd = this.getWorkspaceRoot();
 
-        const args =
-            this.buildArguments(
-                request
-            );
+        return new Promise((resolve, reject) => {
+            const child = spawn(runtime.executablePath, args, {
+                cwd,
+                stdio: ["ignore", "pipe", "pipe"]
+            });
 
-        const cwd =
-            this.getWorkspaceRoot();
+            let stdout = "";
+            let stderr = "";
 
-        return new Promise(
-            (resolve, reject) => {
-                const child =
-                    spawn(
-                        runtime.executablePath,
-                        args,
-                        {
-                            cwd,
-                            stdio: [
-                                "ignore",
-                                "pipe",
-                                "pipe"
-                            ]
-                        }
-                    );
+            child.stdout.on("data", data => {
+                stdout += data.toString();
+            });
 
-                let stdout = "";
-                let stderr = "";
+            child.stderr.on("data", data => {
+                stderr += data.toString();
+            });
 
-                child.stdout.on(
-                    "data",
-                    data => {
-                        stdout +=
-                            data.toString();
-                    }
-                );
+            child.on("error", reject);
 
-                child.stderr.on(
-                    "data",
-                    data => {
-                        stderr +=
-                            data.toString();
-                    }
-                );
-
-                child.on(
-                    "error",
-                    reject
-                );
-
-                child.on(
-                    "close",
-                    exitCode => {
-                        resolve({
-                            stdout,
-                            stderr,
-                            exitCode:
-                                exitCode ?? -1
-                        });
-                    }
-                );
-            }
-        );
+            child.on("close", exitCode => {
+                resolve({
+                    stdout,
+                    stderr,
+                    exitCode: exitCode ?? -1
+                });
+            });
+        });
     }
 
-    private buildArguments(
-        request: IndexerRequest
-    ): string[] {
-        const args: string[] = [
-            request.command
-        ];
+    private buildArguments(request: IndexerRequest): string[] {
+        const args: string[] = [request.command];
 
         if (request.argument) {
-            args.push(
-                request.argument
-            );
+            args.push(request.argument);
         }
 
-        const options =
-            request.options;
-
+        const options = request.options;
         if (!options) {
             return args;
         }
 
         if (options.indexDir) {
-            args.push(
-                "--index-dir",
-                options.indexDir
-            );
+            args.push("--index-dir", options.indexDir);
         }
-
         if (options.force) {
             args.push("--force");
         }
-
         if (options.json) {
             args.push("--json");
         }
-
         if (options.maxFileSize) {
-            args.push(
-                "--max-file-size",
-                options.maxFileSize
-            );
+            args.push("--max-file-size", options.maxFileSize);
         }
-
         if (options.ignore) {
-            for (
-                const pattern
-                of options.ignore
-            ) {
-                args.push(
-                    "--ignore",
-                    pattern
-                );
+            for (const pattern of options.ignore) {
+                args.push("--ignore", pattern);
             }
         }
-
         if (options.host) {
-            args.push(
-                "--host",
-                options.host
-            );
+            args.push("--host", options.host);
         }
-
-        if (
-            options.port !== undefined
-        ) {
-            args.push(
-                "--port",
-                String(options.port)
-            );
+        if (options.port !== undefined) {
+            args.push("--port", String(options.port));
         }
-
         if (options.ref) {
-            args.push(
-                "--ref",
-                options.ref
-            );
+            args.push("--ref", options.ref);
         }
-
-        if (
-            options.workers !== undefined
-        ) {
-            args.push(
-                "--workers",
-                String(options.workers)
-            );
+        if (options.workers !== undefined) {
+            args.push("--workers", String(options.workers));
         }
-
-        if (
-            options.memoryLimit !==
-            undefined
-        ) {
-            args.push(
-                "--memory-limit",
-                String(
-                    options.memoryLimit
-                )
-            );
+        if (options.memoryLimit !== undefined) {
+            args.push("--memory-limit", String(options.memoryLimit));
         }
-
         if (options.profile) {
-            args.push(
-                "--profile",
-                options.profile
-            );
+            args.push("--profile", options.profile);
         }
-
         if (options.noEmbeddings) {
-            args.push(
-                "--no-embeddings"
-            );
+            args.push("--no-embeddings");
         }
-
         if (options.verboseMemory) {
-            args.push(
-                "--verbose-memory"
-            );
+            args.push("--verbose-memory");
         }
 
         return args;
     }
 
     private getWorkspaceRoot(): string {
-        const folders =
-            vscode.workspace.workspaceFolders;
-
-        if (
-            !folders ||
-            folders.length === 0
-        ) {
-            throw new Error(
-                "No VS Code workspace is currently open."
-            );
+        if (this.explicitWorkspaceRoot) {
+            return this.explicitWorkspaceRoot;
         }
 
-        if (
-            folders.length > 1
-        ) {
-            throw new Error(
-                "Codebase Indexer currently requires a single-root workspace."
-            );
+        if (process.env.MCP_WORKSPACE_ROOT) {
+            return process.env.MCP_WORKSPACE_ROOT;
         }
 
-        return folders[0].uri.fsPath;
+        try {
+            // Safely attempt VS Code workspace resolution if module is present
+            const vscode = require("vscode");
+            const folders = vscode.workspace?.workspaceFolders;
+            if (folders && folders.length > 0) {
+                return folders[0].uri.fsPath;
+            }
+        } catch {
+            // VS Code API is not available
+        }
+
+        return process.cwd();
     }
 }

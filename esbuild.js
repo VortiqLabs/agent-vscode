@@ -23,11 +23,9 @@ const esbuildProblemMatcherPlugin = {
 	},
 };
 
-async function main() {
-	const ctx = await esbuild.context({
-		entryPoints: [
-			'src/extension.ts'
-		],
+async function buildAll() {
+	const extensionCtx = await esbuild.context({
+		entryPoints: ['src/extension.ts'],
 		bundle: true,
 		format: 'cjs',
 		minify: production,
@@ -37,20 +35,35 @@ async function main() {
 		outfile: 'dist/extension.js',
 		external: ['vscode'],
 		logLevel: 'silent',
-		plugins: [
-			/* add to the end of plugins array */
-			esbuildProblemMatcherPlugin,
-		],
+		plugins: [esbuildProblemMatcherPlugin]
 	});
+
+	const mcpCtx = await esbuild.context({
+		entryPoints: ['src/mcp/cli.ts'],
+		bundle: true,
+		format: 'cjs',
+		minify: production,
+		sourcemap: !production,
+		sourcesContent: false,
+		platform: 'node',
+		outfile: 'dist/mcp.js',
+		external: ['vscode'],
+		logLevel: 'silent',
+		plugins: [esbuildProblemMatcherPlugin]
+	});
+
 	if (watch) {
-		await ctx.watch();
+		await extensionCtx.watch();
+		await mcpCtx.watch();
 	} else {
-		await ctx.rebuild();
-		await ctx.dispose();
+		await extensionCtx.rebuild();
+		await extensionCtx.dispose();
+		await mcpCtx.rebuild();
+		await mcpCtx.dispose();
 	}
 }
 
-main().catch(e => {
+buildAll().catch(e => {
 	console.error(e);
 	process.exit(1);
 });

@@ -6,6 +6,7 @@ export interface FileReadResult {
     path: string;
     content: string;
     size: number;
+    truncated?: boolean;
 }
 
 export interface FileWriteRequest {
