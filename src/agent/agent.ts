@@ -1,4 +1,5 @@
 import { WorkspaceManager } from "../workspace/manager";
+import { SafeWorkspace } from "../mcp/workspace";
 import { FileTool } from "../tools/file";
 import { GitTool } from "../tools/git";
 import { IndexerService } from "../indexer/indexer";
@@ -9,6 +10,7 @@ import { parseAgentRequest } from "./protocol";
 
 export class Agent {
     private readonly workspaceManager: WorkspaceManager;
+    private readonly safeWorkspace: SafeWorkspace;
     private readonly fileTool: FileTool;
     private readonly gitTool: GitTool;
     private readonly runtimeManager: IndexerRuntimeManager;
@@ -19,10 +21,12 @@ export class Agent {
         explicitWorkspaceRoot?: string
     ) {
         this.workspaceManager = new WorkspaceManager(context, explicitWorkspaceRoot);
+        const rootPath = this.workspaceManager.getWorkspaceRootPath();
+        this.safeWorkspace = new SafeWorkspace(rootPath);
         this.fileTool = new FileTool(this.workspaceManager);
-        this.gitTool = new GitTool(this.workspaceManager, explicitWorkspaceRoot);
+        this.gitTool = new GitTool(this.workspaceManager, rootPath);
         this.runtimeManager = new IndexerRuntimeManager(context);
-        this.indexer = new IndexerService(this.runtimeManager, explicitWorkspaceRoot);
+        this.indexer = new IndexerService(this.runtimeManager, rootPath);
     }
 
     async handle(input: unknown): Promise<AgentResponse> {
@@ -65,6 +69,14 @@ export class Agent {
             case "workspace.get":
                 return this.workspaceManager.getCurrent();
 
+            case "workspace.list_files":
+                return this.safeWorkspace.listFiles({
+                    dirPath: this.optionalString(request.arguments, "dirPath"),
+                    recursive: request.arguments.recursive === true || request.arguments.recursive === undefined ? true : false,
+                    maxDepth: this.optionalNumber(request.arguments, "maxDepth"),
+                    maxResults: this.optionalNumber(request.arguments, "maxResults")
+                });
+
             case "file.read":
                 return this.fileTool.read({
                     path: this.requireString(request.arguments, "path")
@@ -83,6 +95,9 @@ export class Agent {
                     endLine: this.requireInteger(request.arguments, "endLine"),
                     content: this.requireString(request.arguments, "content")
                 });
+
+            case "git.status":
+                return this.gitTool.status();
 
             case "git.diff":
                 return this.gitTool.diff({

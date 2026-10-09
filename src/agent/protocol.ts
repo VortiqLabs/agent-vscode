@@ -5,9 +5,11 @@ import {
 
 const VALID_TOOLS: readonly AgentToolName[] = [
     "workspace.get",
+    "workspace.list_files",
     "file.read",
     "file.write",
     "file.replace_range",
+    "git.status",
     "git.diff",
     "git.apply_patch",
     "indexer.index",
