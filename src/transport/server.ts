@@ -16,14 +16,20 @@ import {
     HealthResponse
 } from "./types";
 
+import {
+    validateAuthToken
+} from "../mcp/auth";
+
 export interface AgentServerOptions {
     host?: string;
     port?: number;
+    authToken?: string;
 }
 
 export class AgentServer {
     private readonly host: string;
     private readonly port: number;
+    private readonly authToken?: string;
 
     private server: http.Server | null = null;
 
@@ -38,6 +44,11 @@ export class AgentServer {
         this.port =
             options.port ??
             43127;
+
+        this.authToken =
+            options.authToken ??
+            process.env.VORTIQLABS_AGENT_AUTH_TOKEN ??
+            process.env.MCP_AUTH_TOKEN;
     }
 
     async start(): Promise<void> {
@@ -191,6 +202,10 @@ export class AgentServer {
                 url.pathname ===
                     "/agent"
             ) {
+                if (!this.authenticateRequest(request, response)) {
+                    return;
+                }
+
                 await this.handleAgentRequest(
                     request,
                     response
@@ -219,6 +234,62 @@ export class AgentServer {
                 }
             );
         }
+    }
+
+    private authenticateRequest(
+        request: http.IncomingMessage,
+        response: http.ServerResponse
+    ): boolean {
+        const requiredToken = this.authToken;
+        if (!requiredToken) {
+            // Fail closed if auth token is not configured
+            this.sendJson(
+                response,
+                401,
+                {
+                    error: "Unauthorized: Agent server authentication token not configured."
+                }
+            );
+            return false;
+        }
+
+        const authHeader = request.headers.authorization;
+        if (!authHeader) {
+            this.sendJson(
+                response,
+                401,
+                {
+                    error: "Unauthorized: Authorization header missing."
+                }
+            );
+            return false;
+        }
+
+        const match = authHeader.match(/^Bearer\s+(.+)$/i);
+        if (!match) {
+            this.sendJson(
+                response,
+                401,
+                {
+                    error: "Unauthorized: Invalid Authorization header format."
+                }
+            );
+            return false;
+        }
+
+        const providedToken = match[1].trim();
+        if (!validateAuthToken(providedToken, requiredToken)) {
+            this.sendJson(
+                response,
+                401,
+                {
+                    error: "Unauthorized: Invalid token."
+                }
+            );
+            return false;
+        }
+
+        return true;
     }
 
     private async handleAgentRequest(
@@ -422,7 +493,7 @@ export class AgentServer {
 
         response.setHeader(
             "Access-Control-Allow-Headers",
-            "Content-Type"
+            "Content-Type, Authorization"
         );
     }
 }

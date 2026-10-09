@@ -1,15 +1,11 @@
 import * as http from "http";
+import * as crypto from "crypto";
 import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 
 import { authenticateHttpRequest } from "./auth";
-import { SafeWorkspace } from "./workspace";
-import { FileTool } from "../tools/file";
-import { GitTool } from "../tools/git";
-import { IndexerRuntimeManager } from "../indexer/runtime/manager";
-import { IndexerService } from "../indexer/indexer";
-import { WorkspaceManager } from "../workspace/manager";
+import { AgentClient } from "./agent-client";
 
 export interface McpServerOptions {
     host?: string;
@@ -17,6 +13,8 @@ export interface McpServerOptions {
     authToken?: string;
     workspaceRoot?: string;
     allowedOrigins?: string[];
+    agentUrl?: string;
+    agentAuthToken?: string;
 }
 
 export class VortiqMcpServer {
@@ -25,13 +23,7 @@ export class VortiqMcpServer {
     private readonly authToken?: string;
     private readonly workspaceRoot: string;
     private readonly allowedOrigins?: string[];
-
-    private readonly safeWorkspace: SafeWorkspace;
-    private readonly workspaceManager: WorkspaceManager;
-    private readonly fileTool: FileTool;
-    private readonly gitTool: GitTool;
-    private readonly indexerService: IndexerService;
-    private readonly runtimeManager: IndexerRuntimeManager;
+    private readonly agentClient: AgentClient;
 
     private httpServer: http.Server | null = null;
     private mcpServer: McpServer | null = null;
@@ -43,12 +35,10 @@ export class VortiqMcpServer {
         this.workspaceRoot = options.workspaceRoot || process.env.MCP_WORKSPACE_ROOT || process.cwd();
         this.allowedOrigins = options.allowedOrigins;
 
-        this.safeWorkspace = new SafeWorkspace(this.workspaceRoot);
-        this.workspaceManager = new WorkspaceManager(undefined, this.workspaceRoot);
-        this.fileTool = new FileTool(this.workspaceManager);
-        this.gitTool = new GitTool(this.workspaceManager, this.workspaceRoot);
-        this.runtimeManager = new IndexerRuntimeManager(this.workspaceRoot);
-        this.indexerService = new IndexerService(this.runtimeManager, this.workspaceRoot);
+        this.agentClient = new AgentClient({
+            baseUrl: options.agentUrl,
+            authToken: options.agentAuthToken || this.authToken
+        });
     }
 
     getHost(): string {
@@ -61,6 +51,10 @@ export class VortiqMcpServer {
 
     getWorkspaceRoot(): string {
         return this.workspaceRoot;
+    }
+
+    getAgentClient(): AgentClient {
+        return this.agentClient;
     }
 
     private setupTools(server: McpServer): void {
@@ -94,32 +88,37 @@ export class VortiqMcpServer {
         // 2. workspace_info
         server.tool(
             "workspace_info",
-            "Returns authorized workspace root, folder information, and project metadata.",
+            "Returns active workspace details and folder metadata via VS Code extension Agent.",
             {},
             async () => {
-                const info = this.workspaceManager.getCurrent();
-                return {
-                    content: [
-                        {
-                            type: "text",
-                            text: JSON.stringify(
-                                {
-                                    authorizedRoot: this.safeWorkspace.getRootPath(),
-                                    workspace: info
-                                },
-                                null,
-                                2
-                            )
-                        }
-                    ]
-                };
+                try {
+                    const result = await this.agentClient.sendRequest("workspace.get");
+                    return {
+                        content: [
+                            {
+                                type: "text",
+                                text: JSON.stringify(result, null, 2)
+                            }
+                        ]
+                    };
+                } catch (error) {
+                    return {
+                        isError: true,
+                        content: [
+                            {
+                                type: "text",
+                                text: `Error fetching workspace info: ${error instanceof Error ? error.message : String(error)}`
+                            }
+                        ]
+                    };
+                }
             }
         );
 
         // 3. list_workspace_files
         server.tool(
             "list_workspace_files",
-            "Lists files and directories under an authorized workspace-relative path.",
+            "Lists files and directories in the workspace via VS Code extension Agent.",
             {
                 dirPath: z.string().optional().describe("Workspace-relative directory path to list (defaults to root)"),
                 recursive: z.boolean().optional().describe("Whether to recursively scan subdirectories"),
@@ -128,13 +127,7 @@ export class VortiqMcpServer {
             },
             async args => {
                 try {
-                    const result = await this.safeWorkspace.listFiles({
-                        dirPath: args.dirPath,
-                        recursive: args.recursive,
-                        maxDepth: args.maxDepth,
-                        maxResults: args.maxResults
-                    });
-
+                    const result = await this.agentClient.sendRequest("workspace.list_files", args);
                     return {
                         content: [
                             {
@@ -160,13 +153,13 @@ export class VortiqMcpServer {
         // 4. read_file
         server.tool(
             "read_file",
-            "Reads specified workspace-relative file subject to authorized root and size limits.",
+            "Reads specified workspace file contents via VS Code extension Agent.",
             {
                 path: z.string().describe("Workspace-relative file path")
             },
             async args => {
                 try {
-                    const fileResult = await this.fileTool.read({ path: args.path });
+                    const fileResult = await this.agentClient.sendRequest("file.read", { path: args.path });
                     return {
                         content: [
                             {
@@ -189,14 +182,90 @@ export class VortiqMcpServer {
             }
         );
 
-        // 5. git_status
+        // 5. write_file
+        server.tool(
+            "write_file",
+            "Creates or overwrites a file in the workspace via VS Code extension Agent.",
+            {
+                path: z.string().describe("Workspace-relative file path"),
+                content: z.string().describe("Content to write to the file")
+            },
+            async args => {
+                try {
+                    const result = await this.agentClient.sendRequest("file.write", {
+                        path: args.path,
+                        content: args.content
+                    });
+                    return {
+                        content: [
+                            {
+                                type: "text",
+                                text: JSON.stringify(result, null, 2)
+                            }
+                        ]
+                    };
+                } catch (error) {
+                    return {
+                        isError: true,
+                        content: [
+                            {
+                                type: "text",
+                                text: `Error writing file: ${error instanceof Error ? error.message : String(error)}`
+                            }
+                        ]
+                    };
+                }
+            }
+        );
+
+        // 6. edit_file
+        server.tool(
+            "edit_file",
+            "Replaces line range in a workspace file via VS Code extension Agent.",
+            {
+                path: z.string().describe("Workspace-relative file path"),
+                startLine: z.number().int().positive().describe("Start line number (1-indexed)"),
+                endLine: z.number().int().positive().describe("End line number (1-indexed, inclusive)"),
+                content: z.string().describe("Replacement content for specified line range")
+            },
+            async args => {
+                try {
+                    const result = await this.agentClient.sendRequest("file.replace_range", {
+                        path: args.path,
+                        startLine: args.startLine,
+                        endLine: args.endLine,
+                        content: args.content
+                    });
+                    return {
+                        content: [
+                            {
+                                type: "text",
+                                text: JSON.stringify(result, null, 2)
+                            }
+                        ]
+                    };
+                } catch (error) {
+                    return {
+                        isError: true,
+                        content: [
+                            {
+                                type: "text",
+                                text: `Error editing file: ${error instanceof Error ? error.message : String(error)}`
+                            }
+                        ]
+                    };
+                }
+            }
+        );
+
+        // 7. git_status
         server.tool(
             "git_status",
-            "Returns current Git branch and working tree status for the workspace.",
+            "Returns current Git branch and working tree status via VS Code extension Agent.",
             {},
             async () => {
                 try {
-                    const status = await this.gitTool.status();
+                    const status = await this.agentClient.sendRequest("git.status");
                     return {
                         content: [
                             {
@@ -219,16 +288,16 @@ export class VortiqMcpServer {
             }
         );
 
-        // 6. git_diff
+        // 8. git_diff
         server.tool(
             "git_diff",
-            "Returns working-tree git diff for the workspace or specified file.",
+            "Returns working-tree git diff via VS Code extension Agent.",
             {
                 path: z.string().optional().describe("Optional workspace-relative file path to limit diff")
             },
             async args => {
                 try {
-                    const diffResult = await this.gitTool.diff({ path: args.path });
+                    const diffResult = await this.agentClient.sendRequest<{ diff?: string }>("git.diff", { path: args.path });
                     return {
                         content: [
                             {
@@ -251,14 +320,46 @@ export class VortiqMcpServer {
             }
         );
 
-        // 7. indexer_status
+        // 9. git_apply_patch
+        server.tool(
+            "git_apply_patch",
+            "Applies a git patch to workspace via VS Code extension Agent.",
+            {
+                patch: z.string().describe("Unified patch content to apply")
+            },
+            async args => {
+                try {
+                    const result = await this.agentClient.sendRequest("git.apply_patch", { patch: args.patch });
+                    return {
+                        content: [
+                            {
+                                type: "text",
+                                text: JSON.stringify(result, null, 2)
+                            }
+                        ]
+                    };
+                } catch (error) {
+                    return {
+                        isError: true,
+                        content: [
+                            {
+                                type: "text",
+                                text: `Error applying patch: ${error instanceof Error ? error.message : String(error)}`
+                            }
+                        ]
+                    };
+                }
+            }
+        );
+
+        // 10. indexer_status
         server.tool(
             "indexer_status",
-            "Inspects Codebase Indexer status using CLI integration.",
+            "Inspects Codebase Indexer status via VS Code extension Agent.",
             {},
             async () => {
                 try {
-                    const result = await this.indexerService.cli.status();
+                    const result = await this.agentClient.sendRequest("indexer.status");
                     return {
                         content: [
                             {
@@ -281,16 +382,16 @@ export class VortiqMcpServer {
             }
         );
 
-        // 8. indexer_search
+        // 11. indexer_search
         server.tool(
             "indexer_search",
-            "Searches the codebase index using Codebase Indexer CLI.",
+            "Searches codebase index via VS Code extension Agent.",
             {
                 query: z.string().describe("Search query string")
             },
             async args => {
                 try {
-                    const result = await this.indexerService.cli.search(args.query);
+                    const result = await this.agentClient.sendRequest("indexer.search", { query: args.query });
                     return {
                         content: [
                             {
@@ -313,16 +414,16 @@ export class VortiqMcpServer {
             }
         );
 
-        // 9. indexer_symbols
+        // 12. indexer_symbols
         server.tool(
             "indexer_symbols",
-            "Retrieves symbol information using Codebase Indexer CLI.",
+            "Retrieves symbol information via VS Code extension Agent.",
             {
                 query: z.string().describe("Symbol search query")
             },
             async args => {
                 try {
-                    const result = await this.indexerService.cli.symbols(args.query);
+                    const result = await this.agentClient.sendRequest("indexer.symbols", { query: args.query });
                     return {
                         content: [
                             {
@@ -345,18 +446,18 @@ export class VortiqMcpServer {
             }
         );
 
-        // 10. index_workspace
+        // 13. index_workspace
         server.tool(
             "index_workspace",
-            "Indexes the authorized workspace using Codebase Indexer CLI.",
+            "Indexes authorized workspace via VS Code extension Agent.",
             {
                 path: z.string().optional().describe("Optional subdirectory path to index inside workspace"),
                 force: z.boolean().optional().describe("Force re-indexing")
             },
             async args => {
                 try {
-                    const targetPath = args.path ? this.safeWorkspace.resolveSafePath(args.path) : undefined;
-                    const result = await this.indexerService.cli.index(targetPath, {
+                    const result = await this.agentClient.sendRequest("indexer.index", {
+                        path: args.path,
                         force: args.force
                     });
                     return {
@@ -460,6 +561,7 @@ export class VortiqMcpServer {
                 process.stderr.write(
                     `VortiqLabs Agent MCP Server started.\n` +
                     `Listening on http://${this.host}:${this.port}/mcp\n` +
+                    `Extension Agent API URL: ${this.agentClient.getBaseUrl()}\n` +
                     `Workspace Root: ${this.workspaceRoot}\n` +
                     `Authentication: ${this.authToken ? "Bearer token enabled" : "Unauthenticated (Local mode only)"}\n`
                 );

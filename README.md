@@ -1,6 +1,34 @@
 # VortiqLabs Agent — Remote MCP Server & VS Code Agent Foundation
 
-VortiqLabs Agent provides a secure Model Context Protocol (MCP) server that connects ChatGPT and external MCP clients directly to a developer's workspace (including GitHub Codespaces).
+VortiqLabs Agent provides a secure Model Context Protocol (MCP) server that connects ChatGPT and external MCP clients directly to a developer's workspace through the active VortiqLabs Agent VS Code Extension.
+
+---
+
+## Architecture Overview
+
+```
+ChatGPT / MCP Client
+         │
+         │  (HTTP + SSE / Streamable HTTP, Bearer Auth)
+         ▼
+┌───────────────────────────────┐
+│ VortiqLabs MCP Gateway Server │  (Port 3000, 0.0.0.0 / 127.0.0.1)
+└──────────────┬────────────────┘
+               │
+               │  (Local HTTP RPC + Bearer Shared Secret)
+               ▼
+┌───────────────────────────────┐
+│ VS Code Extension Agent API   │  (Port 43127, 127.0.0.1 loopback)
+└──────────────┬────────────────┘
+               │
+               │  (Extension Agent / Safe Workspace APIs)
+               ▼
+┌───────────────────────────────┐
+│ Active Workspace Files        │
+└───────────────────────────────┘
+```
+
+The **VS Code Extension** acts as the execution layer and sole source of truth for workspace operations. The **MCP Server** acts as the protocol adapter delegating tool execution directly to the extension Agent.
 
 ---
 
@@ -17,29 +45,36 @@ npm install
 ```
 
 ### 3. Environment Configuration
-Copy the sample environment file `.env.example` to `.env`:
+Copy `.env.example` to `.env`:
 ```bash
 cp .env.example .env
 ```
 
-Configure your environment variables in `.env`:
+Configure environment variables in `.env`:
 - `HOST`: Set to `127.0.0.1` for local development, or `0.0.0.0` inside GitHub Codespaces when remote network access is required.
-- `PORT`: Server port (default: `3000`).
-- `MCP_AUTH_TOKEN`: Secure Bearer token used to authenticate incoming requests.
-- `MCP_WORKSPACE_ROOT`: Path to the authorized workspace folder (defaults to current working directory).
+- `PORT`: MCP server port (default: `3000`).
+- `MCP_AUTH_TOKEN`: Secure Bearer token used to authenticate incoming requests from ChatGPT/MCP clients.
+- `VORTIQLABS_AGENT_URL`: URL of running VS Code extension Agent API (default: `http://127.0.0.1:43127`).
+- `VORTIQLABS_AGENT_AUTH_TOKEN`: Shared secret Bearer token for authenticating MCP requests to the extension Agent.
 
-To generate a new secret auth token:
+Generate a secure random secret token:
 ```bash
 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 ```
 
-### 4. Running the MCP Server
-Start the development MCP server:
+### 4. Running the VS Code Extension & MCP Gateway
+
+#### Step A: Launch VS Code Extension
+1. Open the project folder in VS Code.
+2. Press `F5` (or run **Extension** launch configuration) to launch the **Extension Development Host**.
+3. The extension activates and starts the Agent API on `http://127.0.0.1:43127`.
+
+#### Step B: Start MCP Gateway
+In your terminal, start the MCP gateway server:
 ```bash
 npm run mcp:dev
 ```
-
-Or start the pre-built server directly:
+Or start the pre-built gateway:
 ```bash
 npm run mcp:start
 ```
@@ -49,77 +84,64 @@ The MCP endpoint will be available at:
 
 ---
 
-## Connecting from GitHub Codespaces to ChatGPT
+## GitHub Codespaces Connectivity
 
-### Step 1: Start Server inside Codespace
-Inside your GitHub Codespace terminal:
-1. Ensure `.env` has `HOST=0.0.0.0` and a generated `MCP_AUTH_TOKEN`.
-2. Run `npm run mcp:dev`.
+Follow this workflow to connect ChatGPT to your active workspace inside GitHub Codespaces:
 
-### Step 2: Forward Port in Codespaces
-1. Open the **Ports** tab in Codespaces (bottom panel or VS Code UI).
-2. Locate port `3000` (or add port `3000` manually).
-3. Right-click port `3000` -> **Port Visibility** -> Select **Public** (or **Private** if accessing through authenticated proxy).
-4. Copy the **Forwarded Address** URL (e.g. `https://<codespace-id>-3000.app.github.dev`).
+1. **Open Workspace**: Open the repository inside GitHub Codespaces.
+2. **Install & Compile**: Run `npm install && npm run compile`.
+3. **Launch Extension**: Start the VS Code Extension in Extension Development Host or run `node esbuild.js` / enable extension in host.
+4. **Configure Environment**: Ensure `.env` has:
+   - `HOST=0.0.0.0`
+   - `PORT=3000`
+   - `MCP_AUTH_TOKEN=<your_generated_secret_token>`
+   - `VORTIQLABS_AGENT_URL=http://127.0.0.1:43127`
+   - `VORTIQLABS_AGENT_AUTH_TOKEN=<your_shared_agent_token>`
+5. **Start Gateway**: Run `npm run mcp:dev` or `npm run mcp:start`.
+6. **Forward Port**:
+   - Go to the **Ports** tab in Codespaces.
+   - Forward port `3000`.
+   - Set Port Visibility to **Public** (or **Private** with authenticated proxy).
+   - Copy the Forwarded Address URL (e.g. `https://<codespace-id>-3000.app.github.dev`).
+7. **Connect ChatGPT**:
+   - Exact MCP connection endpoint URL to configure in ChatGPT:
+     `https://<codespace-id>-3000.app.github.dev/mcp`
+   - Authentication method: **Bearer Token**
+   - Token value: `<your_mcp_auth_token>`
+8. **Invoke Tools**: Trigger MCP tools (`list_workspace_files`, `read_file`, `write_file`, `edit_file`, etc.) and verify that edits execute through the running VS Code extension Agent against your workspace.
 
-Your remote MCP endpoint is:
-`https://<codespace-id>-3000.app.github.dev/mcp`
-
----
-
-## Testing & Verification
-
-### Testing with MCP Inspector
-You can inspect tool schemas and execute tools locally or remotely using the official MCP Inspector:
-```bash
-npx @modelcontextprotocol/inspector http://127.0.0.1:3000/mcp
-```
-For remote forwarded endpoints, pass the Bearer token header in MCP Inspector configuration or URL header settings:
-`Authorization: Bearer <your_mcp_auth_token>`
-
-### Registering Endpoint in ChatGPT Custom MCP Apps
-1. Open ChatGPT (interfaces supporting custom MCP connectors).
-2. Add a new **Custom MCP Server / App**.
-3. Set Server URL: `https://<codespace-id>-3000.app.github.dev/mcp`
-4. Set Authentication: **Bearer Token**
-5. Enter your `MCP_AUTH_TOKEN` value.
-6. Verify tool discovery and invoke tools such as `ping`, `workspace_info`, `list_workspace_files`, `git_status`, and `indexer_status`.
+> **Note**: The VS Code Extension must be running for workspace operations to succeed. If the extension is stopped, MCP tool calls will clearly fail with an error stating that the extension must be active.
 
 ---
 
-## Implemented MCP Tools
+## Implemented MCP Tools (Delegated to VS Code Extension Agent)
 
 | Tool Name | Description |
 |---|---|
 | `ping` | Returns server health, version (`0.1.0`), uptime, and timestamp. |
-| `workspace_info` | Returns authorized workspace root, folder structure, and project metadata. |
-| `list_workspace_files` | Safely lists directory contents with recursive/depth limits and result caps. |
-| `read_file` | Reads workspace-relative file contents subject to path traversal guards and 10MB file limits. |
-| `git_status` | Returns working-tree Git status, branch, modified files, and staged files. |
-| `git_diff` | Returns working-tree git diff for the workspace or a specific file. |
-| `indexer_status` | Inspects status of the Codebase Indexer release (`v0.1.7`). |
-| `indexer_search` | Performs text/AST search in the index using Codebase Indexer CLI. |
-| `indexer_symbols` | Retrieves symbol information using Codebase Indexer CLI. |
-| `index_workspace` | Indexes authorized workspace using Codebase Indexer CLI. |
+| `workspace_info` | Returns active workspace information via VS Code extension Agent API. |
+| `list_workspace_files` | Lists files and directories via VS Code extension Agent API. |
+| `read_file` | Reads workspace file contents via VS Code extension Agent API. |
+| `write_file` | Creates or writes workspace file contents via VS Code extension Agent API. |
+| `edit_file` | Replaces specified line range in a file via VS Code extension Agent API. |
+| `git_status` | Returns Git branch and working tree status via VS Code extension Agent API. |
+| `git_diff` | Returns working-tree git diff via VS Code extension Agent API. |
+| `git_apply_patch` | Applies unified git patch via VS Code extension Agent API. |
+| `indexer_status` | Inspects Codebase Indexer status via VS Code extension Agent API. |
+| `indexer_search` | Searches codebase index via VS Code extension Agent API. |
+| `indexer_symbols` | Retrieves symbol information via VS Code extension Agent API. |
+| `index_workspace` | Indexes authorized workspace via VS Code extension Agent API. |
 
 ---
 
-## Codebase Indexer Integration
+## Security & Architectural Guarantees
 
-This server automatically integrates with **Codebase Indexer v0.1.7**:
-- Release download: `https://github.com/VortiqLabs/codebase-indexer/releases/download/v0.1.7/`
-- Platform support: Linux (x64, ARM64), macOS (x64, ARM64), Windows (x64, ARM64).
-- Integrity: Verifies SHA-256 checksums from `SHA256SUMS` before extracting archives.
-- Resources: Preserves native assets (`grammars/`, `tree-sitter-wasms/`, `workers/`, `dashboard/`).
-
----
-
-## Security & Architecture
-
-- **Path Traversal Protection**: Enforces `MCP_WORKSPACE_ROOT` using `realpath` verification and rejects `../` traversal or absolute path escapes.
-- **Constant-time Auth**: Uses `crypto.timingSafeEqual` for secret validation to prevent timing side-channel attacks.
-- **Origin Header Checks**: Protects against DNS rebinding attacks while allowing localhost and Codespaces domains.
-- **Independent Node Process**: Runs completely independently of the VS Code UI while sharing tool implementations with the VS Code extension.
+- **Extension Layer Authorization**: Every workspace operation is validated and executed by the VS Code extension Agent.
+- **Loopback Binding**: Extension Agent API is strictly bound to `127.0.0.1:43127` loopback.
+- **Shared Secret Authentication**: MCP server authenticates to Agent API via `Authorization: Bearer <token>`.
+- **Remote Access Controls**: External MCP endpoint requires constant-time Bearer token verification and validates origin headers to defend against DNS rebinding.
+- **Path Traversal Protection**: Enforces canonical path verification (`realpath`) to block `../` traversal or symlink escapes.
+- **Graceful Shutdown**: Stopping the extension cleanly stops its local Agent server.
 
 ---
 
@@ -127,5 +149,5 @@ This server automatically integrates with **Codebase Indexer v0.1.7**:
 
 - **Run Type Checks**: `npm run check-types`
 - **Run Linter**: `npm run lint`
-- **Run Unit Tests**: `npm test`
-- **Build Extension & MCP Server**: `node esbuild.js`
+- **Run Unit & Integration Tests**: `npm test`
+- **Build Extension & MCP Gateway**: `node esbuild.js`
