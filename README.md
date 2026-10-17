@@ -189,7 +189,7 @@ For the OAuth client in OneAuth, register this exact redirect URI:
 
 `http://localhost:8765/callback`
 
-The extension uses Authorization Code + PKCE (S256) and requests the `openid profile email tunnel:manage` scopes. The default OAuth client ID and OneAuth base URL are contributed extension settings; override them through VS Code Settings if your deployment uses different values. Access and refresh tokens are stored using VS Code's SecretStorage, not in workspace files.
+The extension uses Authorization Code + PKCE (S256) and requests the `openid profile email` scopes. The default OAuth client ID and OneAuth base URL are contributed extension settings; override them through VS Code Settings if your deployment uses different values. Tunnel creation is manual, so the extension does not request the `tunnel:manage` scope. Access and refresh tokens are stored using VS Code's SecretStorage, not in workspace files.
 
 After signing in, select **Get tunnel URL + port**. The extension calls `POST /api/agent/tunnel` with the OAuth bearer token and displays the returned public URL, hostname, and port. This action provisions/displays the tunnel allocation; it does not by itself guarantee end-to-end traffic forwarding through the shared gateway.
 

@@ -6,7 +6,7 @@ const ACCESS_TOKEN_KEY = "oneauth.accessToken";
 const REFRESH_TOKEN_KEY = "oneauth.refreshToken";
 const EXPIRES_AT_KEY = "oneauth.expiresAt";
 const DEFAULT_BASE_URL = "https://oneauth.nishantapps.in";
-const DEFAULT_CLIENT_ID = "oa_FBp47kV6NxenFMogTQOiXeAi9gUszLDm";
+const DEFAULT_CLIENT_ID = "oa_8WSUjKeAT6CaaJLdZ1Lsr-oHu-ow3LHT";
 const REDIRECT_URI = "http://localhost:8765/callback";
 
 interface TokenResponse {
@@ -57,7 +57,7 @@ export class OneAuthClient {
         authorize.searchParams.set("response_type", "code");
         authorize.searchParams.set("client_id", this.clientId);
         authorize.searchParams.set("redirect_uri", REDIRECT_URI);
-        authorize.searchParams.set("scope", "openid profile email tunnel:manage");
+        authorize.searchParams.set("scope", "openid profile email");
         authorize.searchParams.set("state", state);
         authorize.searchParams.set("code_challenge", challenge);
         authorize.searchParams.set("code_challenge_method", "S256");

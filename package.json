@@ -67,7 +67,7 @@
         },
         "vortiqlabsAgent.oneAuthClientId": {
           "type": "string",
-          "default": "oa_FBp47kV6NxenFMogTQOiXeAi9gUszLDm",
+          "default": "oa_8WSUjKeAT6CaaJLdZ1Lsr-oHu-ow3LHT",
           "description": "OAuth client ID registered for the VortiqLabs Agent extension."
         },
         "vortiqlabsAgent.openAITunnelRuntime": {
