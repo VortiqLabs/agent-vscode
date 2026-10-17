@@ -88,6 +88,7 @@ export async function activate(
         process.env.MCP_WORKSPACE_ROOT ||
         vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
     const mcpServer = new VortiqMcpServer({
+        host: context.extensionMode === vscode.ExtensionMode.Development ? "0.0.0.0" : "127.0.0.1",
         workspaceRoot,
         agentUrl: process.env.VORTIQLABS_AGENT_URL || "http://127.0.0.1:43127",
         agentAuthToken: authToken,

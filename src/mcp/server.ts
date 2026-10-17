@@ -35,7 +35,7 @@ export class VortiqMcpServer {
     >();
 
     constructor(options: McpServerOptions = {}) {
-        this.host = options.host || process.env.HOST || "0.0.0.0";
+        this.host = options.host || process.env.MCP_HOST || "127.0.0.1";
         this.port = options.port || (process.env.PORT ? parseInt(process.env.PORT, 10) : 3000);
         this.workspaceRoot = options.workspaceRoot || process.env.MCP_WORKSPACE_ROOT || process.cwd();
         this.allowedOrigins =
