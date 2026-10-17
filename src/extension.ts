@@ -162,40 +162,28 @@ export async function activate(
         getTunnelCommand
     );
 
-    try {
-        await mcpServer.start();
-        console.log(
-            `VortiqLabs Agent MCP server listening on ` +
-            `http://${mcpServer.getHost()}:${mcpServer.getPort()}/mcp`
-        );
-        log("MCP server listening", { host: mcpServer.getHost(), port: mcpServer.getPort(), path: "/mcp" });
-    } catch (error) {
-        log("Failed to start MCP server", error instanceof Error ? error.message : String(error));
-        console.error("Failed to start VortiqLabs Agent MCP server:", error);
-        vscode.window.showErrorMessage(
-            "VortiqLabs Agent MCP server failed to start."
-        );
-        return;
-    }
+    // Start backend listeners after registering the view provider, without blocking
+    // extension activation. VS Code can now resolve/render the sidebar immediately.
+    void (async () => {
+        try {
+            await agentServer.start();
+            log("Agent API server listening", { host: agentServer.getHost(), port: agentServer.getPort() });
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            log("Failed to start Agent API server", message);
+            void vscode.window.showErrorMessage(`VortiqLabs Agent failed to start its local server: ${message}`);
+            return;
+        }
 
-
-    try {
-        await agentServer.start();
-        console.log(
-            `VortiqLabs Agent server listening on ` +
-            `http://${agentServer.getHost()}:` +
-            `${agentServer.getPort()}`
-        );
-        log("Agent API server listening", { host: agentServer.getHost(), port: agentServer.getPort() });
-    } catch (error) {
-        log("Failed to start Agent API server", error instanceof Error ? error.message : String(error));
-        console.error("Failed to start VortiqLabs Agent server:", error);
-        vscode.window.showErrorMessage(
-            "VortiqLabs Agent failed to start its local server."
-        );
-        return;
-    }
-
+        try {
+            await mcpServer.start();
+            log("MCP server listening", { host: mcpServer.getHost(), port: mcpServer.getPort(), path: "/mcp" });
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            log("Failed to start MCP server", message);
+            void vscode.window.showErrorMessage(`VortiqLabs Agent MCP server failed to start: ${message}`);
+        }
+    })();
 
     const workspaceCommand =
         vscode.commands.registerCommand(
