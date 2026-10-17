@@ -129,7 +129,29 @@ export async function activate(
     }, output);
     const savedTunnel = context.globalState.get<TunnelInfo>("agentTunnel");
     if (savedTunnel) {sidebarProvider.setTunnelInfo(savedTunnel);}
-    void authClient.isSignedIn().then(signedIn => sidebarProvider.setAuthState(signedIn)).catch(error => log("Unable to restore OneAuth sign-in state", error instanceof Error ? error.message : String(error)));
+    void authClient.isSignedIn().then(async signedIn => {
+        sidebarProvider.setAuthState(signedIn);
+        if (signedIn) {
+            log("Existing OneAuth session detected.");
+            return;
+        }
+
+        log("No OneAuth session found; prompting the user to sign in.");
+        const choice = await vscode.window.showInformationMessage(
+            "Sign in to OneAuth to enable authenticated VortiqLabs Agent features and tunnel provisioning.",
+            "Sign in",
+            "Not now"
+        );
+        if (choice === "Sign in") {
+            try {
+                await doSignIn();
+            } catch (error) {
+                const message = error instanceof Error ? error.message : String(error);
+                log("Sign-in from startup prompt failed.", message);
+                void vscode.window.showErrorMessage(`OneAuth sign-in failed: ${message}`);
+            }
+        }
+    }).catch(error => log("Unable to restore OneAuth sign-in state", error instanceof Error ? error.message : String(error)));
     const signInCommand = vscode.commands.registerCommand("vortiqlabs-agent.signIn", async () => {
         try {await doSignIn();} catch (error) {void vscode.window.showErrorMessage(error instanceof Error ? error.message : String(error));}
     });
