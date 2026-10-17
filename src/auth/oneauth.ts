@@ -9,6 +9,15 @@ const DEFAULT_BASE_URL = "https://oneauth.nishantapps.in";
 const DEFAULT_CLIENT_ID = "oa_8WSUjKeAT6CaaJLdZ1Lsr-oHu-ow3LHT";
 const REDIRECT_URI = "http://localhost:8765/callback";
 
+export interface OneAuthUserInfo {
+    sub?: string;
+    name?: string;
+    preferred_username?: string;
+    email?: string;
+    email_verified?: boolean;
+    picture?: string;
+}
+
 interface TokenResponse {
     access_token?: string;
     refresh_token?: string;
@@ -53,9 +62,9 @@ export class OneAuthClient {
         const challenge = crypto.createHash("sha256").update(verifier).digest("base64url");
         const state = crypto.randomBytes(24).toString("hex");
         const callback = this.waitForCallback(state);
-        const authorize = new URL("/api/oauth/authorize", this.baseUrl);
+        const authorize = new URL("/oauth/authorize", this.baseUrl);
         authorize.searchParams.set("response_type", "code");
-        authorize.searchParams.set("client_id", this.clientId);
+        authorize.searchParams.set("client_id", "oa_8WSUjKeAT6CaaJLdZ1Lsr-oHu-ow3LHT");
         authorize.searchParams.set("redirect_uri", REDIRECT_URI);
         authorize.searchParams.set("scope", "openid profile email");
         authorize.searchParams.set("state", state);

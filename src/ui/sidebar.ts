@@ -1,10 +1,12 @@
 import * as vscode from "vscode";
 import { AgentActivity, AgentActivityItem } from "./activity";
 import type { TunnelInfo } from "../tunnel/oneauth-tunnel";
+import type { OneAuthUserInfo } from "../auth/oneauth";
 
 export interface SidebarActions {
     signIn: () => Promise<void>;
     signOut: () => Promise<void>;
+    getUserInfo: () => Promise<OneAuthUserInfo | undefined>;
     provisionTunnel: () => Promise<TunnelInfo>;
     connectOpenAITunnel: () => Promise<string>;
     disconnectOpenAITunnel: () => Promise<void>;
@@ -18,6 +20,7 @@ export class AgentSidebarProvider implements vscode.WebviewViewProvider {
     private publishTimer?: ReturnType<typeof setTimeout>;
     private refreshTimer?: ReturnType<typeof setInterval>;
     private signedIn = false;
+    private userInfo?: OneAuthUserInfo;
     private tunnel?: TunnelInfo;
     private busyAction = false;
 
@@ -33,6 +36,11 @@ export class AgentSidebarProvider implements vscode.WebviewViewProvider {
         this.post({ type: "authState", signedIn });
     }
 
+    setUserInfo(userInfo?: OneAuthUserInfo): void {
+        this.userInfo = userInfo;
+        this.post({ type: "userInfo", userInfo: userInfo ?? null });
+    }
+
     setTunnelInfo(tunnel?: TunnelInfo): void {
         this.tunnel = tunnel;
         this.post({ type: "tunnelState", tunnel: tunnel ?? null });
@@ -43,6 +51,7 @@ export class AgentSidebarProvider implements vscode.WebviewViewProvider {
         view.webview.options = { enableScripts: true };
         view.webview.html = this.html(view.webview);
         this.post({ type: "authState", signedIn: this.signedIn });
+        this.post({ type: "userInfo", userInfo: this.userInfo ?? null });
         this.post({ type: "tunnelState", tunnel: this.tunnel ?? null });
         this.subscription?.dispose();
         this.subscription = this.activity.subscribe(items => {
@@ -59,6 +68,7 @@ export class AgentSidebarProvider implements vscode.WebviewViewProvider {
             if (message?.type === "ready") {
                 this.post({ type: "snapshot", items: this.activity.snapshot() });
                 this.post({ type: "authState", signedIn: this.signedIn });
+                this.post({ type: "userInfo", userInfo: this.userInfo ?? null });
                 this.post({ type: "tunnelState", tunnel: this.tunnel ?? null });
             }
             if (message?.type === "clear") {this.activity.clear();}
@@ -92,8 +102,14 @@ export class AgentSidebarProvider implements vscode.WebviewViewProvider {
                 try {
                     await this.actions.signIn();
                     this.signedIn = true;
-                    this.output?.appendLine(`[${new Date().toISOString()}] [Sidebar] OneAuth sign-in action completed successfully.`);
                     this.post({ type: "authState", signedIn: true });
+                    try {
+                        this.userInfo = await this.actions.getUserInfo();
+                        this.post({ type: "userInfo", userInfo: this.userInfo ?? null });
+                    } catch (profileError) {
+                        this.output?.appendLine(`[${new Date().toISOString()}] [Sidebar] Unable to load OneAuth profile: ${profileError instanceof Error ? profileError.message : String(profileError)}`);
+                    }
+                    this.output?.appendLine(`[${new Date().toISOString()}] [Sidebar] OneAuth sign-in action completed successfully.`);
                 } catch (error) {
                     const message = error instanceof Error ? error.message : String(error);
                     this.output?.appendLine(`[${new Date().toISOString()}] [Sidebar] OneAuth sign-in action failed: ${message}`);
@@ -110,7 +126,9 @@ export class AgentSidebarProvider implements vscode.WebviewViewProvider {
                     await this.actions.signOut();
                     this.signedIn = false;
                     this.tunnel = undefined;
+                    this.userInfo = undefined;
                     this.post({ type: "authState", signedIn: false });
+                    this.post({ type: "userInfo", userInfo: null });
                     this.post({ type: "tunnelState", tunnel: null });
                 } catch (error) {
                     void vscode.window.showErrorMessage(error instanceof Error ? error.message : String(error));
@@ -194,12 +212,13 @@ export class AgentSidebarProvider implements vscode.WebviewViewProvider {
 <title>VortiqLabs Agent</title>
 <style>
 :root{color-scheme:dark;--panel:var(--vscode-sideBar-background);--border:var(--vscode-panel-border);--fg:var(--vscode-foreground);--muted:var(--vscode-descriptionForeground);--accent:var(--vscode-textLink-foreground);--green:var(--vscode-testing-iconPassed,#4ec9b0);--red:var(--vscode-testing-iconFailed,#f48771);--yellow:var(--vscode-editorWarning-foreground,#cca700)}
-*{box-sizing:border-box}body{margin:0;padding:12px;background:var(--panel);color:var(--fg);font:12px/1.5 var(--vscode-font-family)}header{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:12px}h1{font-size:14px;margin:0;font-weight:650;letter-spacing:.2px}.sub{color:var(--muted);font-size:11px}.actions{display:flex;gap:5px;flex-wrap:wrap}button{background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);border:1px solid var(--border);border-radius:5px;padding:5px 8px;cursor:pointer;font:inherit}button:hover{background:var(--vscode-button-secondaryHoverBackground)}button:disabled{opacity:.55;cursor:wait}.primary{background:var(--vscode-button-background);color:var(--vscode-button-foreground);border-color:transparent}.primary:hover{background:var(--vscode-button-hoverBackground)}#account{border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:12px}.account-row{display:flex;justify-content:space-between;align-items:center;gap:8px}.section-title{font-weight:650;font-size:12px}.muted{color:var(--muted)}#auth-status{font-size:11px;color:var(--muted);margin:3px 0 9px}.tunnel{margin-top:10px;padding-top:9px;border-top:1px solid var(--border);overflow-wrap:anywhere}.tunnel-line{margin-top:5px}.tunnel-label{color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.5px}.tunnel-value{font-family:var(--vscode-editor-font-family,monospace);font-size:11px;overflow-wrap:anywhere;user-select:text}#status{display:flex;gap:6px;align-items:center;color:var(--muted);margin-bottom:10px}.dot{width:7px;height:7px;border-radius:50%;background:var(--green)}#feed{display:flex;flex-direction:column;gap:9px}.item{border:1px solid var(--border);border-radius:8px;overflow:hidden;background:color-mix(in srgb,var(--panel) 88%,var(--fg) 4%)}.item-head{padding:8px 9px;display:flex;justify-content:space-between;gap:8px;align-items:flex-start}.tool{font-weight:650;overflow-wrap:anywhere}.meta{font-size:10px;color:var(--muted);white-space:nowrap}.pill{font-size:10px;padding:1px 5px;border-radius:10px;background:var(--vscode-badge-background);color:var(--vscode-badge-foreground)}.pill.running{color:var(--yellow)}.pill.error{color:var(--red)}.pill.success{color:var(--green)}details{border-top:1px solid var(--border)}summary{cursor:pointer;color:var(--muted);padding:5px 9px;user-select:none}pre{margin:0;padding:8px;white-space:pre-wrap;overflow-wrap:anywhere;max-height:360px;overflow:auto;background:var(--vscode-textCodeBlock-background);font:11px/1.5 var(--vscode-editor-font-family,monospace)}.diff .add{color:var(--green);display:block}.diff .del{color:var(--red);display:block}.stream{border-top:1px solid var(--border)}.stream-title{padding:5px 9px;color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.6px}.empty{padding:28px 8px;text-align:center;color:var(--muted);border:1px dashed var(--border);border-radius:8px}.command{color:var(--accent);font-family:var(--vscode-editor-font-family,monospace);overflow-wrap:anywhere}
+*{box-sizing:border-box}body{margin:0;padding:12px;background:var(--panel);color:var(--fg);font:12px/1.5 var(--vscode-font-family)}header{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:12px}h1{font-size:14px;margin:0;font-weight:650;letter-spacing:.2px}.sub{color:var(--muted);font-size:11px}.actions{display:flex;gap:5px;flex-wrap:wrap}button{background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);border:1px solid var(--border);border-radius:5px;padding:5px 8px;cursor:pointer;font:inherit}button:hover{background:var(--vscode-button-secondaryHoverBackground)}button:disabled{opacity:.55;cursor:wait}.primary{background:var(--vscode-button-background);color:var(--vscode-button-foreground);border-color:transparent}.primary:hover{background:var(--vscode-button-hoverBackground)}#account{border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:12px}.account-row{display:flex;justify-content:space-between;align-items:center;gap:8px}.section-title{font-weight:650;font-size:12px}.muted{color:var(--muted)}.profile{margin-top:9px;padding:9px;border-radius:6px;background:color-mix(in srgb,var(--panel) 82%,var(--fg) 6%);overflow-wrap:anywhere}.profile-name{font-weight:650;font-size:13px}.profile .sub{margin-top:2px}#auth-status{font-size:11px;color:var(--muted);margin:3px 0 9px}.tunnel{margin-top:10px;padding-top:9px;border-top:1px solid var(--border);overflow-wrap:anywhere}.tunnel-line{margin-top:5px}.tunnel-label{color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.5px}.tunnel-value{font-family:var(--vscode-editor-font-family,monospace);font-size:11px;overflow-wrap:anywhere;user-select:text}#status{display:flex;gap:6px;align-items:center;color:var(--muted);margin-bottom:10px}.dot{width:7px;height:7px;border-radius:50%;background:var(--green)}#feed{display:flex;flex-direction:column;gap:9px}.item{border:1px solid var(--border);border-radius:8px;overflow:hidden;background:color-mix(in srgb,var(--panel) 88%,var(--fg) 4%)}.item-head{padding:8px 9px;display:flex;justify-content:space-between;gap:8px;align-items:flex-start}.tool{font-weight:650;overflow-wrap:anywhere}.meta{font-size:10px;color:var(--muted);white-space:nowrap}.pill{font-size:10px;padding:1px 5px;border-radius:10px;background:var(--vscode-badge-background);color:var(--vscode-badge-foreground)}.pill.running{color:var(--yellow)}.pill.error{color:var(--red)}.pill.success{color:var(--green)}details{border-top:1px solid var(--border)}summary{cursor:pointer;color:var(--muted);padding:5px 9px;user-select:none}pre{margin:0;padding:8px;white-space:pre-wrap;overflow-wrap:anywhere;max-height:360px;overflow:auto;background:var(--vscode-textCodeBlock-background);font:11px/1.5 var(--vscode-editor-font-family,monospace)}.diff .add{color:var(--green);display:block}.diff .del{color:var(--red);display:block}.stream{border-top:1px solid var(--border)}.stream-title{padding:5px 9px;color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.6px}.empty{padding:28px 8px;text-align:center;color:var(--muted);border:1px dashed var(--border);border-radius:8px}.command{color:var(--accent);font-family:var(--vscode-editor-font-family,monospace);overflow-wrap:anywhere}
 </style></head><body>
 <header><div><h1>VortiqLabs Agent</h1><div class="sub">Workspace agent · live activity</div></div><div class="actions"><button id="refresh" title="Refresh activity">↻</button><button id="clear">Clear</button></div></header>
 <section id="account">
  <div class="account-row"><div class="section-title">OneAuth</div><span id="auth-status">Checking sign-in…</span></div>
  <div class="actions"><button id="sign-in" class="primary">Sign in</button><button id="sign-out" hidden>Sign out</button></div>
+ <div id="profile" class="profile" hidden><div id="profile-name" class="profile-name"></div><div id="profile-email" class="sub"></div><div id="profile-username" class="sub"></div><div id="profile-verified" class="sub"></div></div>
  <div id="tunnel" class="tunnel" hidden>
   <div class="section-title">Agent tunnel</div>
   <div class="tunnel-line"><div class="tunnel-label">Public URL</div><div class="tunnel-value" id="tunnel-url"></div><button id="copy-url">Copy URL</button></div>
@@ -217,9 +236,10 @@ const vscode=acquireVsCodeApi();let items=[];let signedIn=false;let tunnel=null;
 const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 function render(){const feed=document.getElementById("feed");document.getElementById("count").textContent=items.length+" request"+(items.length===1?"":"s")+" · "+items.filter(x=>x.status==="running").length+" running";if(!items.length){feed.innerHTML='<div class="empty">Waiting for the first MCP request</div>';return}feed.innerHTML=items.map(x=>{const time=new Date(x.startedAt).toLocaleTimeString();let result=x.resultText||"";let diff=result;try{const parsed=JSON.parse(result);if(typeof parsed.diff==="string")diff=parsed.diff;else if(typeof parsed.patch==="string")diff=parsed.patch;else if(typeof parsed.result?.diff==="string")diff=parsed.result.diff}catch{}const looksDiff=/(^|\n)(diff --git |\+\+\+ |--- |@@ )/.test(diff);let body=details("Arguments",x.argumentsText)+details(looksDiff?"Git diff / patch":"Result",looksDiff?diff:result,looksDiff)+details("Error",x.errorText)+((x.stdout||x.stderr)?'<div class="stream"><div class="stream-title">Terminal output'+(x.exitCode!==undefined?' · exit '+x.exitCode:'')+'</div>'+(x.stdout?'<pre>'+esc(x.stdout)+'</pre>':'')+(x.stderr?'<pre style="color:var(--red)">'+esc(x.stderr)+'</pre>':'')+'</div>':"");return '<article class="item"><div class="item-head"><div><div class="tool">'+esc(x.tool)+'</div><div class="meta">'+esc(time)+(x.command?'<div class="command">$ '+esc(x.command)+'</div>':"")+'</div></div><span class="pill '+esc(x.status)+'">'+esc(x.status)+(x.durationMs!==undefined?' · '+x.durationMs+'ms':'')+'</span></div>'+body+'</article>'}).join("")}
 function renderAccount(){document.getElementById("auth-status").textContent=signedIn?"Signed in":"Not signed in";document.getElementById("sign-in").hidden=signedIn;if(!busy){document.getElementById("sign-in").disabled=false;document.getElementById("sign-in").textContent="Sign in";}document.getElementById("sign-out").hidden=!signedIn;document.getElementById("get-tunnel").disabled=!signedIn||busy;document.getElementById("tunnel").hidden=!tunnel;if(tunnel){document.getElementById("tunnel-url").textContent=tunnel.url;document.getElementById("tunnel-port").textContent=String(tunnel.port);document.getElementById("tunnel-host").textContent=tunnel.hostname;}}
+function renderProfile(user){const panel=document.getElementById("profile");panel.hidden=!signedIn||!user;if(!user)return;document.getElementById("profile-name").textContent=user.name||user.preferred_username||"OneAuth user";document.getElementById("profile-email").textContent=user.email||"Email not provided";document.getElementById("profile-username").textContent=user.preferred_username&&user.preferred_username!==user.name?"@"+user.preferred_username:"";document.getElementById("profile-verified").textContent=user.email_verified===true?"Email verified":user.email_verified===false?"Email not verified":""}
 function details(title,body,isDiff=false){if(!body)return "";return '<details><summary>'+esc(title)+'</summary><pre class="'+(isDiff?'diff':'')+'">'+(isDiff?lines(body):esc(body))+'</pre></details>'}
 function lines(text){return String(text||"").split("\n").map(line=>{const cls=line.startsWith("+")&&!line.startsWith("+++")?"add":line.startsWith("-")&&!line.startsWith("---")?"del":"";return '<span class="'+cls+'">'+esc(line)+'</span>'}).join("")}
-window.addEventListener("message",e=>{const d=e.data;if(d?.type==="snapshot"){items=d.items||[];render()}if(d?.type==="authState"){signedIn=Boolean(d.signedIn);renderAccount()}if(d?.type==="tunnelState"){tunnel=d.tunnel||null;renderAccount()}if(d?.type==="actionBusy"){busy=Boolean(d.busy);document.querySelectorAll("#account button").forEach(b=>{if(b.id!=="copy-url")b.disabled=busy||(!signedIn&&b.id==="get-tunnel")});renderAccount()}});
+window.addEventListener("message",e=>{const d=e.data;if(d?.type==="snapshot"){items=d.items||[];render()}if(d?.type==="authState"){signedIn=Boolean(d.signedIn);renderAccount();renderProfile(window.oneAuthUser||null)}if(d?.type==="userInfo"){window.oneAuthUser=d.userInfo||null;renderProfile(window.oneAuthUser)}if(d?.type==="tunnelState"){tunnel=d.tunnel||null;renderAccount()}if(d?.type==="actionBusy"){busy=Boolean(d.busy);document.querySelectorAll("#account button").forEach(b=>{if(b.id!=="copy-url")b.disabled=busy||(!signedIn&&b.id==="get-tunnel")});renderAccount()}});
 document.getElementById("refresh").onclick=()=>vscode.postMessage({type:"refresh"});document.getElementById("clear").onclick=()=>vscode.postMessage({type:"clear"});document.getElementById("sign-in").onclick=()=>{const button=document.getElementById("sign-in");button.textContent="Opening sign-in…";button.disabled=true;document.getElementById("auth-status").textContent="Opening OneAuth authorization page…";vscode.postMessage({type:"signIn"})};document.getElementById("sign-out").onclick=()=>vscode.postMessage({type:"signOut"});document.getElementById("get-tunnel").onclick=()=>vscode.postMessage({type:"provisionTunnel"});document.getElementById("connect-openai").onclick=()=>vscode.postMessage({type:"connectOpenAITunnel"});document.getElementById("disconnect-openai").onclick=()=>vscode.postMessage({type:"disconnectOpenAITunnel"});document.getElementById("copy-url").onclick=()=>{if(tunnel?.url)vscode.postMessage({type:"copyText",text:tunnel.url})};vscode.postMessage({type:"ready"});
 </script></body></html>`;
     }

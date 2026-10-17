@@ -112,6 +112,7 @@ export async function activate(
         await authClient.signOut();
         await context.globalState.update("agentTunnel", undefined);
         sidebarProvider.setAuthState(false);
+        sidebarProvider.setUserInfo(undefined);
         sidebarProvider.setTunnelInfo(undefined);
     };
     const getTunnel = async (): Promise<TunnelInfo> => {
@@ -123,6 +124,7 @@ export async function activate(
     sidebarProvider = new AgentSidebarProvider(context, activity, {
         signIn: doSignIn,
         signOut: doSignOut,
+        getUserInfo: () => authClient.getUserInfo(),
         provisionTunnel: getTunnel,
         connectOpenAITunnel: () => openAITunnel.connect(`http://127.0.0.1:${mcpServer.getPort()}/mcp`),
         disconnectOpenAITunnel: () => openAITunnel.disconnect()
@@ -132,6 +134,8 @@ export async function activate(
     void authClient.isSignedIn().then(async signedIn => {
         sidebarProvider.setAuthState(signedIn);
         if (signedIn) {
+            try {sidebarProvider.setUserInfo(await authClient.getUserInfo());}
+            catch (error) {log("Unable to restore OneAuth profile", error instanceof Error ? error.message : String(error));}
             log("Existing OneAuth session detected.");
             return;
         }
