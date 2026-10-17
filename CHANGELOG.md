@@ -6,6 +6,18 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-09
+
+### Added
+- VortiqLabs Agent Activity Bar sidebar with live MCP request lifecycle, arguments, formatted results/errors, bounded terminal output, elapsed time and exit codes.
+- Live stdout/stderr chunk forwarding for terminal execution, with time and output limits.
+- VS Code-native MCP tools for active editor context, language diagnostics, document symbols, bounded workspace text search, and opening HTTP(S) URLs in the configured browser.
+- Activity history is bounded in memory and the sidebar uses a restrictive Content Security Policy.
+
+### Security and limitations
+- Browser opening uses VS Code's stable external-URI API; arbitrary browser-tab inspection is not falsely claimed as a built-in capability.
+- Destructive or UI-bound APIs are not exposed through a blanket unrestricted command bridge.
+
 ## [0.2.0] - 2026-10-09
 
 ### Added

@@ -114,7 +114,7 @@ Follow this workflow to connect ChatGPT to your active workspace inside GitHub C
 
 | Tool Name | Description |
 |---|---|
-| `ping` | Returns server health, version (`0.2.0`), uptime, and timestamp. |
+| `ping` | Returns server health, version (`0.3.0`), uptime, and timestamp. |
 | `workspace_info` | Returns active workspace information via VS Code extension Agent API. |
 | `list_workspace_files` | Lists files and directories via VS Code extension Agent API. |
 | `read_file` | Reads workspace file contents via VS Code extension Agent API. |
@@ -149,6 +149,22 @@ The standalone runtime is pinned to Codebase Indexer `0.1.7` and downloaded on f
 
 ---
 
+## VS Code Agent Activity Sidebar
+
+The extension adds a **VortiqLabs Agent** Activity Bar view that streams MCP activity from the extension Agent: tool name, arguments, running/success/error status, elapsed time, bounded results, terminal stdout/stderr, exit codes, and syntax-coloured unified diffs/patches. Use the refresh button to request a snapshot or Clear to clear the in-memory activity feed. The feed is intentionally bounded and is not persisted to disk.
+
+Additional VS Code-native MCP tools:
+
+- `editor_context` — active document, language, cursor, selection and selected text.
+- `editor_diagnostics` — current language-service diagnostics for the active document or a workspace-relative path.
+- `editor_symbols` — document symbols from installed VS Code language providers.
+- `workspace_search` — bounded literal text search while skipping common dependency/build folders.
+- `browser_open_url` — opens HTTP(S) URLs in the user's configured external browser.
+
+Terminal stdout/stderr is forwarded as process chunks while the command is running, then the completed output and exit code are recorded. Output and execution time are bounded. Browser automation and inspection of arbitrary existing browser tabs are **not** part of the stable VS Code Extension API; `browser_open_url` intentionally opens the user's configured browser instead of pretending otherwise. Browser automation can be added through an explicit Playwright/browser MCP integration where installed and authorized.
+
+The VS Code Extension API is extensive and not every API is a suitable MCP tool. APIs tied to UI interactions, debugging, authentication, extension installation, or destructive operations need capability checks and user consent rather than unrestricted generic invocation.
+
 ## Security & Architectural Guarantees
 
 - **Extension Layer Authorization**: Every workspace operation is validated and executed by the VS Code extension Agent.
@@ -164,4 +180,16 @@ The standalone runtime is pinned to Codebase Indexer `0.1.7` and downloaded on f
 - **Run Type Checks**: `npm run check-types`
 - **Run Linter**: `npm run lint`
 - **Run Unit & Integration Tests**: `npm test`
-- **Build Extension & MCP Gateway**: `node esbuild.js`
+
+## OneAuth Sign-in and Tunnel Allocation
+
+The Activity sidebar includes **Sign in**, **Sign out**, and **Get tunnel URL + port** actions.
+
+For the OAuth client in OneAuth, register this exact redirect URI:
+
+`http://localhost:8765/callback`
+
+The extension uses Authorization Code + PKCE (S256) and requests the `openid profile email tunnel:manage` scopes. The default OAuth client ID and OneAuth base URL are contributed extension settings; override them through VS Code Settings if your deployment uses different values. Access and refresh tokens are stored using VS Code's SecretStorage, not in workspace files.
+
+After signing in, select **Get tunnel URL + port**. The extension calls `POST /api/agent/tunnel` with the OAuth bearer token and displays the returned public URL, hostname, and port. This action provisions/displays the tunnel allocation; it does not by itself guarantee end-to-end traffic forwarding through the shared gateway.
+

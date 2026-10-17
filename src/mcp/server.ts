@@ -17,6 +17,7 @@ export interface McpServerOptions {
     allowedOrigins?: string[];
     agentUrl?: string;
     agentAuthToken?: string;
+    extensionVersion?: string;
 }
 
 export class VortiqMcpServer {
@@ -25,6 +26,7 @@ export class VortiqMcpServer {
     private readonly workspaceRoot: string;
     private readonly allowedOrigins?: string[];
     private readonly agentClient: AgentClient;
+    private readonly extensionVersion: string;
 
     private httpServer: http.Server | null = null;
     private readonly sessions = new Map<
@@ -33,12 +35,13 @@ export class VortiqMcpServer {
     >();
 
     constructor(options: McpServerOptions = {}) {
-        this.host = options.host || process.env.HOST || "127.0.0.1";
+        this.host = options.host || process.env.HOST || "0.0.0.0";
         this.port = options.port || (process.env.PORT ? parseInt(process.env.PORT, 10) : 3000);
         this.workspaceRoot = options.workspaceRoot || process.env.MCP_WORKSPACE_ROOT || process.cwd();
         this.allowedOrigins =
             options.allowedOrigins ||
             process.env.MCP_ALLOWED_ORIGINS?.split(",").map(origin => origin.trim()).filter(Boolean);
+        this.extensionVersion = options.extensionVersion ?? process.env.VORTIQLABS_AGENT_EXTENSION_VERSION ?? "unknown";
 
         this.agentClient = new AgentClient({
             baseUrl: options.agentUrl,
@@ -63,6 +66,11 @@ export class VortiqMcpServer {
     }
 
     private setupTools(server: McpServer): void {
+        this.registerForwardingTool(server, "editor_context", "Get the active editor file, language, cursor, selection, and selected text through VS Code.", {}, "editor.context");
+        this.registerForwardingTool(server, "editor_diagnostics", "Get current VS Code language-service diagnostics for the active editor or a workspace-relative file.", { path: z.string().optional().describe("Optional workspace-relative file path") }, "editor.diagnostics");
+        this.registerForwardingTool(server, "editor_symbols", "Get document symbols from the active editor or a workspace-relative file using registered VS Code language providers.", { path: z.string().optional().describe("Optional workspace-relative file path") }, "editor.symbols");
+        this.registerForwardingTool(server, "workspace_search", "Search text in workspace source files with bounded results, skipping common dependency/build directories.", { query: z.string().min(1).describe("Literal text to search for"), include: z.string().optional().describe("Optional path substring filter"), maxResults: z.number().int().min(1).max(200).optional().describe("Maximum matches; defaults to 100") }, "workspace.search");
+        this.registerForwardingTool(server, "browser_open_url", "Open an HTTP(S) URL in the user's configured browser. VS Code does not provide a universal stable API for inspecting arbitrary browser tabs.", { url: z.string().url().describe("Absolute HTTP(S) URL") }, "browser.open_url");
         // 1. ping
         server.tool(
             "ping",
@@ -77,7 +85,7 @@ export class VortiqMcpServer {
                                 {
                                     status: "ok",
                                     service: "VortiqLabs Agent MCP Server",
-                                    version: "0.2.0",
+                                    version: this.extensionVersion,
                                     uptimeSeconds: Math.floor(process.uptime()),
                                     timestamp: new Date().toISOString()
                                 },
@@ -805,7 +813,7 @@ export class VortiqMcpServer {
                         const server = new McpServer(
                             {
                                 name: "VortiqLabs Agent MCP Server",
-                                version: "0.2.0"
+                                version: this.extensionVersion
                             },
                             {
                                 instructions:
@@ -841,7 +849,7 @@ export class VortiqMcpServer {
                         JSON.stringify({
                             status: "ok",
                             service: "vortiqlabs-agent-mcp",
-                            version: "0.2.0"
+                            version: this.extensionVersion
                         })
                     );
                     return;

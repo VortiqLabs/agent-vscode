@@ -24,12 +24,14 @@ export interface AgentServerOptions {
     host?: string;
     port?: number;
     authToken?: string;
+    version?: string;
 }
 
 export class AgentServer {
     private readonly host: string;
     private readonly port: number;
     private readonly authToken?: string;
+    private readonly version: string;
 
     private server: http.Server | null = null;
 
@@ -48,6 +50,7 @@ export class AgentServer {
         this.authToken =
             options.authToken ??
             process.env.VORTIQLABS_AGENT_AUTH_TOKEN;
+        this.version = options.version ?? process.env.VORTIQLABS_AGENT_EXTENSION_VERSION ?? "unknown";
     }
 
     async start(): Promise<void> {
@@ -187,8 +190,8 @@ export class AgentServer {
                         ok: true,
                         service:
                             "vortiqlabs-agent",
-                        version:
-                            "0.1.0"
+                        version: this.version,
+                        activity: this.agent.getActivityDiagnostics()
                     }
                 );
 

@@ -2,7 +2,7 @@
   "name": "vortiqlabs-agent",
   "displayName": "VortiqLabs Agent",
   "description": "AI coding agent for VortiqLabs",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "engines": {
     "vscode": "^1.140.0"
   },
@@ -10,7 +10,8 @@
     "Other"
   ],
   "activationEvents": [
-    "*"
+    "onStartupFinished",
+    "onView:vortiqlabs-agent.activity"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -30,8 +31,70 @@
       {
         "command": "vortiqlabs-agent.fileEdit",
         "title": "VortiqLabs: Edit File"
+      },
+      {
+        "command": "vortiqlabs-agent.focusActivity",
+        "title": "VortiqLabs: Focus Agent Activity"
+      },
+      {
+        "command": "vortiqlabs-agent.signIn",
+        "title": "VortiqLabs: Sign in to OneAuth"
+      },
+      {
+        "command": "vortiqlabs-agent.signOut",
+        "title": "VortiqLabs: Sign out of OneAuth"
+      },
+      {
+        "command": "vortiqlabs-agent.getTunnel",
+        "title": "VortiqLabs: Get Agent Tunnel URL and Port"
+      },
+      {
+        "command": "vortiqlabs-agent.connectOpenAITunnel",
+        "title": "VortiqLabs: Connect OpenAI Secure MCP Tunnel"
+      },
+      {
+        "command": "vortiqlabs-agent.disconnectOpenAITunnel",
+        "title": "VortiqLabs: Disconnect OpenAI Secure MCP Tunnel"
       }
-    ]
+    ],
+    "configuration": {
+      "title": "VortiqLabs Agent",
+      "properties": {
+        "vortiqlabsAgent.oneAuthBaseUrl": {
+          "type": "string",
+          "default": "https://oneauth.nishantapps.in",
+          "description": "Base URL of the OneAuth service."
+        },
+        "vortiqlabsAgent.oneAuthClientId": {
+          "type": "string",
+          "default": "oa_FBp47kV6NxenFMogTQOiXeAi9gUszLDm",
+          "description": "OAuth client ID registered for the VortiqLabs Agent extension."
+        },
+        "vortiqlabsAgent.openAITunnelRuntime": {
+          "type": "string",
+          "default": "tunnel-client-runtime-cloudflared",
+          "description": "Managed OpenAI tunnel runtime is installed automatically in VS Code extension storage."
+        }
+      }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "vortiqlabs-agent",
+          "title": "VortiqLabs Agent",
+          "icon": "resources/vortiqlabs-agent.svg"
+        }
+      ]
+    },
+    "views": {
+      "vortiqlabs-agent": [
+        {
+          "id": "vortiqlabs-agent.activity",
+          "name": "Agent Activity",
+          "type": "webview"
+        }
+      ]
+    }
   },
   "scripts": {
     "mcp:dev": "npm run check-types && node esbuild.js && node dist/mcp.js",
@@ -71,5 +134,10 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.1"
+  },
+  "publisher": "vortiqlabs",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/VortiqLabs/agent-vscode.git"
   }
 }

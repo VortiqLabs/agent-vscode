@@ -104,8 +104,11 @@ test("MCP Server - official Streamable HTTP client initialization, discovery, an
             await client.connect(transport);
             assert.equal(transport.protocolVersion, "2025-11-25");
             const tools = await client.listTools();
-            assert.ok(tools.tools.length >= 13);
+            assert.ok(tools.tools.length >= 18);
             assert.ok(tools.tools.every(tool => tool.name && tool.inputSchema));
+            for (const expected of ["editor_context", "editor_diagnostics", "editor_symbols", "workspace_search", "browser_open_url"]) {
+                assert.ok(tools.tools.some(tool => tool.name === expected), `missing MCP tool: ${expected}`);
+            }
             const ping = await client.callTool({ name: "ping", arguments: {} });
             assert.equal(ping.isError, undefined);
             const content = (ping as { content: Array<{ text?: string }> }).content;
