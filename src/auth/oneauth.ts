@@ -45,11 +45,34 @@ export class OneAuthClient {
     }
 
     get clientId(): string {
-        return vscode.workspace.getConfiguration("vortiqlabsAgent").get<string>("oneAuthClientId", DEFAULT_CLIENT_ID).trim();
+        return "oa_8WSUjKeAT6CaaJLdZ1Lsr-oHu-ow3LHT";
     }
 
     async isSignedIn(): Promise<boolean> {
         return Boolean(await this.context.secrets.get(ACCESS_TOKEN_KEY));
+    }
+
+    async getUserInfo(): Promise<OneAuthUserInfo | undefined> {
+        const accessToken = await this.getAccessToken();
+        const endpoint = new URL("/api/oauth/userinfo", this.baseUrl);
+        const response = await fetch(endpoint, {
+            method: "GET",
+            headers: { authorization: `Bearer ${accessToken}`, accept: "application/json" }
+        });
+        if (!response.ok) {
+            const body = await response.text().catch(() => "");
+            this.log("Unable to load OneAuth user profile.", { status: response.status });
+            throw new Error(`Could not load OneAuth profile (HTTP ${response.status}).${body ? ` ${body.slice(0, 180)}` : ""}`);
+        }
+        const payload = await response.json() as OneAuthUserInfo;
+        return {
+            sub: typeof payload.sub === "string" ? payload.sub : undefined,
+            name: typeof payload.name === "string" ? payload.name : undefined,
+            preferred_username: typeof payload.preferred_username === "string" ? payload.preferred_username : undefined,
+            email: typeof payload.email === "string" ? payload.email : undefined,
+            email_verified: typeof payload.email_verified === "boolean" ? payload.email_verified : undefined,
+            picture: typeof payload.picture === "string" ? payload.picture : undefined
+        };
     }
 
     async signIn(): Promise<void> {
