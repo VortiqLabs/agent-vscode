@@ -69,6 +69,13 @@ export class AgentActivity {
         this.publish();
     }
 
+    updateResult(id: string, result: unknown): void {
+        const item = this.items.find(candidate => candidate.id === id);
+        if (!item) {return;}
+        item.resultText = bounded(result, 12_000);
+        this.publish();
+    }
+
     finish(response: AgentResponse, durationMs: number): void {
         const item = this.items.find(candidate => candidate.id === response.id);
         if (!item) {return;}
@@ -89,7 +96,15 @@ export class AgentActivity {
     }
 
     clear(): void {
-        this.items.length = 0;
+        // Keep pending approval cards visible; clearing them would orphan the
+        // proposal and leave the user with no way to accept or decline it.
+        const pending = this.items.filter(item => {
+            try {
+                const result = JSON.parse(item.resultText ?? "null") as { changeReview?: { status?: string } } | null;
+                return result?.changeReview?.status === "pending";
+            } catch { return false; }
+        });
+        this.items.splice(0, this.items.length, ...pending);
         this.publish();
     }
 

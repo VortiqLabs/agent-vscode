@@ -1,5 +1,6 @@
 import * as fs from "fs";
 import * as path from "path";
+import { randomUUID } from "crypto";
 import type * as vscodeTypes from "vscode";
 import { WorkspaceManager } from "../workspace/manager";
 import { SafeWorkspace } from "../mcp/workspace";
@@ -14,6 +15,21 @@ import { AgentRequest, AgentResponse } from "./types";
 import { parseAgentRequest } from "./protocol";
 import { AgentActivity } from "../ui/activity";
 
+interface FileSnapshot {
+    path: string;
+    content: string | null;
+}
+
+interface PendingChangeReview {
+    id: string;
+    activityId: string;
+    paths: string[];
+    before: FileSnapshot[];
+    preview: string;
+    apply: () => Promise<unknown>;
+    status: "pending" | "accepted" | "declined";
+}
+
 export class Agent {
     private readonly context?: unknown;
     private readonly workspaceManager: WorkspaceManager;
@@ -24,6 +40,7 @@ export class Agent {
     private readonly runtimeManager: IndexerRuntimeManager;
     private readonly indexer: IndexerService;
     private readonly activity?: AgentActivity;
+    private readonly changeReviews = new Map<string, PendingChangeReview>();
 
     constructor(
         context?: unknown,
@@ -40,6 +57,109 @@ export class Agent {
         this.terminalTool = new TerminalTool(this.workspaceManager);
         this.runtimeManager = new IndexerRuntimeManager(context);
         this.indexer = new IndexerService(this.runtimeManager, rootPath);
+    }
+
+    async resolveChangeReview(id: string, decision: "accept" | "decline"): Promise<{ id: string; status: "accepted" | "declined"; paths: string[] }> {
+        const review = this.changeReviews.get(id);
+        if (!review || review.status !== "pending") {
+            throw new Error("This code change is no longer awaiting a decision.");
+        }
+
+        if (decision === "accept") {
+            // The proposal may have been waiting while the user edited a file.
+            // Refuse to apply stale work rather than overwrite newer content.
+            for (const snapshot of review.before) {
+                const fullPath = this.workspaceManager.resolvePath(snapshot.path);
+                if (!fullPath) {throw new Error(`Cannot safely apply an invalid workspace path: ${snapshot.path}`);}
+                const current = await fs.promises.readFile(fullPath, "utf8").catch(error => {
+                    if ((error as NodeJS.ErrnoException).code === "ENOENT") {return null;}
+                    throw error;
+                });
+                if (current !== snapshot.content) {
+                    throw new Error(`Cannot accept this proposal because ${snapshot.path} changed while it was awaiting review. Ask the agent to reread the file and prepare a fresh change.`);
+                }
+            }
+            await review.apply();
+            review.status = "accepted";
+        } else {
+            // Changes are staged until acceptance, so declining is a safe no-op.
+            review.status = "declined";
+        }
+
+        this.changeReviews.delete(id);
+        const activityItem = this.activity?.snapshot().find(item => item.id === review.activityId);
+        let result: Record<string, unknown> = {};
+        try {
+            if (activityItem?.resultText) {
+                const parsed: unknown = JSON.parse(activityItem.resultText);
+                if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {result = parsed as Record<string, unknown>;}
+            }
+        } catch { /* Preserve at least the review status if the original result was truncated. */ }
+        result.pendingApproval = false;
+        result.message = review.status === "accepted" ? "The reviewed code change was accepted and applied." : "The proposed code change was declined; no files were changed.";
+        result.changeReview = { id: review.id, paths: review.paths, preview: review.preview, status: review.status };
+        this.activity?.updateResult(review.activityId, result);
+        return { id, status: review.status, paths: review.paths };
+    }
+
+    private async withChangeReview<T>(activityId: string, paths: string[], preview: string, operation: () => Promise<T>): Promise<unknown> {
+        // Non-extension/standalone Agents have no approval UI; preserve their
+        // established direct-call behavior instead of creating an unresolvable proposal.
+        if (!this.activity) {return operation();}
+        const uniquePaths = [...new Set(paths)];
+        if (uniquePaths.length === 0) {throw new Error("No files were identified for code-change review.");}
+        const before = await Promise.all(uniquePaths.map(async relativePath => {
+            const fullPath = this.workspaceManager.resolvePath(relativePath);
+            if (!fullPath) {throw new Error(`Path is outside the active workspace or invalid: ${relativePath}`);}
+            const content = await fs.promises.readFile(fullPath, "utf8").catch(error => {
+                if ((error as NodeJS.ErrnoException).code === "ENOENT") {return null;}
+                throw error;
+            });
+            return { path: relativePath, content };
+        }));
+        if (this.changeReviews.size >= 20) {
+            throw new Error("There are already 20 code changes awaiting review. Accept or decline an existing proposal before creating another.");
+        }
+        const id = randomUUID();
+        const review: PendingChangeReview = {
+            id, activityId, paths: uniquePaths, before, preview: preview.slice(0, 16_000), apply: async () => {await operation();}, status: "pending"
+        };
+        this.changeReviews.set(id, review);
+        return {
+            pendingApproval: true,
+            message: "The proposed code change has not been applied. Review it in the VortiqLabs Agent sidebar and choose Accept changes or Decline.",
+            changeReview: { id, paths: uniquePaths, preview: review.preview, status: "pending" }
+        };
+    }
+
+    private async previewFile(pathValue: string): Promise<string> {
+        const fullPath = this.workspaceManager.resolvePath(pathValue);
+        if (!fullPath) {throw new Error(`Path is outside the active workspace or invalid: ${pathValue}`);}
+        return fs.promises.readFile(fullPath, "utf8").catch(error => {
+            if ((error as NodeJS.ErrnoException).code === "ENOENT") {return "(file does not exist yet)";}
+            throw error;
+        });
+    }
+
+    private patchPaths(patch: string): string[] {
+        const paths = new Set<string>();
+        const lines = patch.split(/\r?\n/);
+        for (let i = 0; i < lines.length; i++) {
+            if (!lines[i].startsWith("--- ")) {continue;}
+            const oldPath = lines[i].slice(4).trim();
+            const newLine = lines[i + 1];
+            if (!newLine?.startsWith("+++ ")) {continue;}
+            const newPath = newLine.slice(4).trim();
+            for (const value of [oldPath, newPath]) {
+                if (value === "/dev/null") {continue;}
+                if (value.startsWith('"') || value.endsWith('"')) {
+                    throw new Error("This patch uses quoted/escaped file paths, which cannot be safely previewed for approval. Use simple workspace-relative paths and retry.");
+                }
+                const relativePath = value.startsWith("a/") || value.startsWith("b/") ? value.slice(2) : value;
+                if (relativePath) {paths.add(relativePath);}
+            }
+        }
+        return [...paths];
     }
 
     getActivityDiagnostics(): { count: number; latest: { tool: string; status: string; startedAt: string } | null } {
@@ -137,19 +257,23 @@ export class Agent {
                     path: this.requireString(request.arguments, "path")
                 });
 
-            case "file.write":
-                return this.fileTool.write({
-                    path: this.requireString(request.arguments, "path"),
-                    content: this.requireString(request.arguments, "content")
-                });
+            case "file.write": {
+                const filePath = this.requireString(request.arguments, "path");
+                const content = this.requireString(request.arguments, "content");
+                const current = await this.previewFile(filePath);
+                const preview = `File: ${filePath}\n--- Current\n${current}\n+++ Proposed\n${content}`;
+                return this.withChangeReview(request.id, [filePath], preview, () => this.fileTool.write({ path: filePath, content }));
+            }
 
-            case "file.replace_range":
-                return this.fileTool.replaceRange({
-                    path: this.requireString(request.arguments, "path"),
-                    startLine: this.requireInteger(request.arguments, "startLine"),
-                    endLine: this.requireInteger(request.arguments, "endLine"),
-                    content: this.requireString(request.arguments, "content")
-                });
+            case "file.replace_range": {
+                const filePath = this.requireString(request.arguments, "path");
+                const startLine = this.requireInteger(request.arguments, "startLine");
+                const endLine = this.requireInteger(request.arguments, "endLine");
+                const content = this.requireString(request.arguments, "content");
+                const current = await this.previewFile(filePath);
+                const preview = `File: ${filePath}\nReplace lines ${startLine}-${endLine}\n--- Current\n${current}\n+++ Replacement\n${content}`;
+                return this.withChangeReview(request.id, [filePath], preview, () => this.fileTool.replaceRange({ path: filePath, startLine, endLine, content }));
+            }
 
             case "git.status":
                 return this.gitTool.status();
@@ -162,10 +286,10 @@ export class Agent {
                             : this.requireString(request.arguments, "path")
                 });
 
-            case "git.apply_patch":
-                return this.gitTool.applyPatch({
-                    patch: this.requireString(request.arguments, "patch")
-                });
+            case "git.apply_patch": {
+                const patch = this.requireString(request.arguments, "patch");
+                return this.withChangeReview(request.id, this.patchPaths(patch), patch, () => this.gitTool.applyPatch({ patch }));
+            }
 
             case "indexer.install":
                 return this.installIndexerRuntime();

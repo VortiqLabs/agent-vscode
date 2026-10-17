@@ -27,3 +27,14 @@ test("Agent Activity retains bounded request history and supports clear", () => 
     activity.clear();
     assert.equal(activity.snapshot().length, 0);
 });
+
+
+test("clear retains pending code-change reviews so they cannot become orphaned", () => {
+    const activity = new AgentActivity();
+    activity.start({ id: "pending-review", tool: "file.write", arguments: { path: "sample.ts" } });
+    activity.finish({ id: "pending-review", success: true, result: { pendingApproval: true, changeReview: { id: "review-1", status: "pending" } } }, 1);
+    activity.start({ id: "completed", tool: "workspace.get", arguments: {} });
+    activity.finish({ id: "completed", success: true, result: { name: "workspace" } }, 1);
+    activity.clear();
+    assert.deepEqual(activity.snapshot().map(item => item.id), ["pending-review"]);
+});

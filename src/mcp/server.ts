@@ -198,7 +198,7 @@ export class VortiqMcpServer {
         // 5. write_file
         server.tool(
             "write_file",
-            "Creates or overwrites a file in the workspace via VS Code extension Agent.",
+            "Proposes creating or overwriting a workspace file. In the VS Code extension, the change is not applied until the user accepts it in the VortiqLabs Agent sidebar; declining discards it.",
             {
                 path: z.string().describe("Workspace-relative file path"),
                 content: z.string().describe("Content to write to the file")
@@ -234,7 +234,7 @@ export class VortiqMcpServer {
         // 6. edit_file
         server.tool(
             "edit_file",
-            "Replaces line range in a workspace file via VS Code extension Agent.",
+            "Proposes replacing a line range in a workspace file. In the VS Code extension, the change is not applied until the user accepts it in the VortiqLabs Agent sidebar; declining discards it.",
             {
                 path: z.string().describe("Workspace-relative file path"),
                 startLine: z.number().int().positive().describe("Start line number (1-indexed)"),
@@ -336,7 +336,7 @@ export class VortiqMcpServer {
         // 9. git_apply_patch
         server.tool(
             "git_apply_patch",
-            "Applies a git patch to workspace via VS Code extension Agent.",
+            "Proposes a git patch for the workspace. In the VS Code extension, the patch is not applied until the user accepts it in the VortiqLabs Agent sidebar; declining discards it.",
             {
                 patch: z.string().describe("Unified patch content to apply")
             },

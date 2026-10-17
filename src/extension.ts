@@ -106,6 +106,21 @@ export async function activate(
         log("OneAuth sign-in action invoked.");
         await authClient.signIn();
         sidebarProvider.setAuthState(true);
+        try {
+            const userInfo = await authClient.getUserInfo();
+            sidebarProvider.setUserInfo(userInfo);
+            log("OneAuth profile loaded after sign-in.", {
+                hasName: Boolean(userInfo?.name),
+                hasUsername: Boolean(userInfo?.preferred_username),
+                hasEmail: Boolean(userInfo?.email),
+                hasPicture: Boolean(userInfo?.picture)
+            });
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            log("Sign-in succeeded but OneAuth profile could not be loaded.", message);
+            sidebarProvider.setUserInfo(undefined);
+            throw error instanceof Error ? error : new Error(message);
+        }
         log("OneAuth sign-in action completed.");
     };
     const doSignOut = async () => {
@@ -128,16 +143,41 @@ export async function activate(
         getUserInfo: () => authClient.getUserInfo(),
         provisionTunnel: getTunnel,
         connectOpenAITunnel: () => openAITunnel.connect(`http://127.0.0.1:${mcpServer.getPort()}/mcp`),
-        disconnectOpenAITunnel: () => openAITunnel.disconnect()
+        disconnectOpenAITunnel: () => openAITunnel.disconnect(),
+        resolveCodeChange: (id, decision) => agent.resolveChangeReview(id, decision)
     }, output);
     const savedTunnel = context.globalState.get<TunnelInfo>("agentTunnel");
     if (savedTunnel) {sidebarProvider.setTunnelInfo(savedTunnel);}
     void authClient.isSignedIn().then(async signedIn => {
         sidebarProvider.setAuthState(signedIn);
         if (signedIn) {
-            try {sidebarProvider.setUserInfo(await authClient.getUserInfo());}
-            catch (error) {log("Unable to restore OneAuth profile", error instanceof Error ? error.message : String(error));}
-            log("Existing OneAuth session detected.");
+            try {
+                sidebarProvider.setUserInfo(await authClient.getUserInfo());
+                log("Existing OneAuth session restored.");
+            } catch (error) {
+                const message = error instanceof Error ? error.message : String(error);
+                log("Unable to restore OneAuth profile", message);
+                if (message.includes("Sign in to OneAuth first.")) {
+                    await authClient.signOut();
+                    sidebarProvider.setAuthState(false);
+                    sidebarProvider.setUserInfo(undefined);
+                    log("Cleared stale OneAuth credentials; prompting for sign-in.");
+                    const choice = await vscode.window.showWarningMessage(
+                        "Your saved OneAuth session is no longer valid. Sign in to OneAuth again?",
+                        "Sign in",
+                        "Not now"
+                    );
+                    if (choice === "Sign in") {
+                        try {
+                            await doSignIn();
+                        } catch (signInError) {
+                            const signInMessage = signInError instanceof Error ? signInError.message : String(signInError);
+                            log("Reauthentication after profile restore failed.", signInMessage);
+                            void vscode.window.showErrorMessage(`OneAuth sign-in failed: ${signInMessage}`);
+                        }
+                    }
+                }
+            }
             return;
         }
 
@@ -356,7 +396,9 @@ export async function activate(
 
                 if (result.success) {
                     vscode.window.showInformationMessage(
-                        `Wrote ${filePath}`
+                        result.result && typeof result.result === "object" && "pendingApproval" in result.result && result.result.pendingApproval === true
+                            ? `Proposal for ${filePath} is ready. Review it in the VortiqLabs Agent sidebar.`
+                            : `Wrote ${filePath}`
                     );
                 } else {
                     vscode.window.showErrorMessage(
@@ -437,7 +479,9 @@ export async function activate(
 
                 if (result.success) {
                     vscode.window.showInformationMessage(
-                        `Edited ${filePath}`
+                        result.result && typeof result.result === "object" && "pendingApproval" in result.result && result.result.pendingApproval === true
+                            ? `Proposal for ${filePath} is ready. Review it in the VortiqLabs Agent sidebar.`
+                            : `Edited ${filePath}`
                     );
                 } else {
                     vscode.window.showErrorMessage(
