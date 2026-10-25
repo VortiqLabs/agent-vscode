@@ -47,3 +47,17 @@ test("accepting a stale proposal is rejected to protect intervening edits", asyn
     await assert.rejects(() => agent.resolveChangeReview(result.changeReview.id, "accept"), /changed while it was awaiting review/i);
     assert.equal(fs.readFileSync(filePath, "utf8"), "newer user edit\n");
 }));
+
+
+test("queued proposals for the same file can be accepted sequentially without allowing unrelated edits", async () => withAgent(async (agent, root) => {
+    const filePath = path.join(root, "example.ts");
+    fs.writeFileSync(filePath, "line one\nline two\nline three\n");
+    const first = await agent.handle({ id: "review-queued-1", tool: "file.replace_range", arguments: { path: "example.ts", startLine: 1, endLine: 1, content: "first accepted" } });
+    const second = await agent.handle({ id: "review-queued-2", tool: "file.replace_range", arguments: { path: "example.ts", startLine: 2, endLine: 2, content: "second accepted" } });
+    if (!first.success || !second.success) { throw new Error("Expected both queued proposals to be created successfully."); }
+    const firstReview = (first.result as { changeReview: { id: string } }).changeReview;
+    const secondReview = (second.result as { changeReview: { id: string } }).changeReview;
+    await agent.resolveChangeReview(firstReview.id, "accept");
+    await agent.resolveChangeReview(secondReview.id, "accept");
+    assert.equal(fs.readFileSync(filePath, "utf8"), "first accepted\nsecond accepted\nline three\n");
+}));

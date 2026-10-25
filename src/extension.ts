@@ -95,6 +95,35 @@ export async function activate(
         extensionVersion: context.extension.packageJSON.version
     });
 
+    let serversStarted = false;
+    let serversStarting: Promise<void> | undefined;
+    const startAuthenticatedServers = async (): Promise<void> => {
+        if (serversStarted) { return; }
+        if (serversStarting) { return serversStarting; }
+        serversStarting = (async () => {
+            await agentServer.start();
+            log("Agent API server listening after OneAuth authentication", { host: agentServer.getHost(), port: agentServer.getPort() });
+            try {
+                await mcpServer.start();
+                serversStarted = true;
+                log("MCP server listening after OneAuth authentication", { host: mcpServer.getHost(), port: mcpServer.getPort(), path: "/mcp" });
+            } catch (error) {
+                await agentServer.stop().catch(() => undefined);
+                throw error;
+            }
+        })();
+        try { await serversStarting; }
+        finally { serversStarting = undefined; }
+    };
+    const stopAuthenticatedServers = async (): Promise<void> => {
+        if (serversStarting) { await serversStarting.catch(() => undefined); }
+        if (!serversStarted) { return; }
+        await mcpServer.stop();
+        await agentServer.stop();
+        serversStarted = false;
+        log("Agent API and MCP servers stopped because the OneAuth session ended.");
+    };
+
     const focusActivityCommand = vscode.commands.registerCommand("vortiqlabs-agent.focusActivity", async () => {
         await vscode.commands.executeCommand("workbench.view.extension.vortiqlabs-agent");
     });
@@ -121,10 +150,12 @@ export async function activate(
             sidebarProvider.setUserInfo(undefined);
             throw error instanceof Error ? error : new Error(message);
         }
-        log("OneAuth sign-in action completed.");
+        await startAuthenticatedServers();
+        log("OneAuth sign-in action completed; authenticated services are running.");
     };
     const doSignOut = async () => {
         await openAITunnel.disconnect();
+        await stopAuthenticatedServers();
         await authClient.signOut();
         await context.globalState.update("agentTunnel", undefined);
         sidebarProvider.setAuthState(false);
@@ -153,7 +184,8 @@ export async function activate(
         if (signedIn) {
             try {
                 sidebarProvider.setUserInfo(await authClient.getUserInfo());
-                log("Existing OneAuth session restored.");
+                await startAuthenticatedServers();
+                log("Existing OneAuth session restored; authenticated services are running.");
             } catch (error) {
                 const message = error instanceof Error ? error.message : String(error);
                 log("Unable to restore OneAuth profile", message);
@@ -181,21 +213,7 @@ export async function activate(
             return;
         }
 
-        log("No OneAuth session found; prompting the user to sign in.");
-        const choice = await vscode.window.showInformationMessage(
-            "Sign in to OneAuth to enable authenticated VortiqLabs Agent features and tunnel provisioning.",
-            "Sign in",
-            "Not now"
-        );
-        if (choice === "Sign in") {
-            try {
-                await doSignIn();
-            } catch (error) {
-                const message = error instanceof Error ? error.message : String(error);
-                log("Sign-in from startup prompt failed.", message);
-                void vscode.window.showErrorMessage(`OneAuth sign-in failed: ${message}`);
-            }
-        }
+        log("No OneAuth session found; MCP and Agent API servers remain stopped until sign-in.");
     }).catch(error => log("Unable to restore OneAuth sign-in state", error instanceof Error ? error.message : String(error)));
     const signInCommand = vscode.commands.registerCommand("vortiqlabs-agent.signIn", async () => {
         try {await doSignIn();} catch (error) {void vscode.window.showErrorMessage(error instanceof Error ? error.message : String(error));}
@@ -229,28 +247,8 @@ export async function activate(
         getTunnelCommand
     );
 
-    // Start backend listeners after registering the view provider, without blocking
-    // extension activation. VS Code can now resolve/render the sidebar immediately.
-    void (async () => {
-        try {
-            await agentServer.start();
-            log("Agent API server listening", { host: agentServer.getHost(), port: agentServer.getPort() });
-        } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            log("Failed to start Agent API server", message);
-            void vscode.window.showErrorMessage(`VortiqLabs Agent failed to start its local server: ${message}`);
-            return;
-        }
-
-        try {
-            await mcpServer.start();
-            log("MCP server listening", { host: mcpServer.getHost(), port: mcpServer.getPort(), path: "/mcp" });
-        } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            log("Failed to start MCP server", message);
-            void vscode.window.showErrorMessage(`VortiqLabs Agent MCP server failed to start: ${message}`);
-        }
-    })();
+    // Agent API and MCP listeners are started only by startAuthenticatedServers()
+    // after a valid OneAuth session is restored or a user completes sign-in.
 
     const workspaceCommand =
         vscode.commands.registerCommand(

@@ -41,6 +41,7 @@ export class Agent {
     private readonly indexer: IndexerService;
     private readonly activity?: AgentActivity;
     private readonly changeReviews = new Map<string, PendingChangeReview>();
+    private readonly lastAcceptedContent = new Map<string, string | null>();
 
     constructor(
         context?: unknown,
@@ -76,10 +77,26 @@ export class Agent {
                     throw error;
                 });
                 if (current !== snapshot.content) {
-                    throw new Error(`Cannot accept this proposal because ${snapshot.path} changed while it was awaiting review. Ask the agent to reread the file and prepare a fresh change.`);
+                    // Multiple queued proposals may intentionally target the same file.
+                    // Allow a later proposal to apply on top of an earlier accepted proposal,
+                    // but only when the current bytes exactly match the last accepted result.
+                    // Any unrelated/user edit still fails closed.
+                    const acceptedBase = this.lastAcceptedContent.get(snapshot.path);
+                    if (!this.lastAcceptedContent.has(snapshot.path) || current !== acceptedBase) {
+                        throw new Error(`Cannot accept this proposal because ${snapshot.path} changed while it was awaiting review and does not match a previously accepted proposal. Review or recreate this change.`);
+                    }
                 }
             }
             await review.apply();
+            for (const snapshot of review.before) {
+                const fullPath = this.workspaceManager.resolvePath(snapshot.path);
+                if (!fullPath) { throw new Error(`Cannot safely verify accepted file: ${snapshot.path}`); }
+                const resultingContent = await fs.promises.readFile(fullPath, "utf8").catch(error => {
+                    if ((error as NodeJS.ErrnoException).code === "ENOENT") { return null; }
+                    throw error;
+                });
+                this.lastAcceptedContent.set(snapshot.path, resultingContent);
+            }
             review.status = "accepted";
         } else {
             // Changes are staged until acceptance, so declining is a safe no-op.
