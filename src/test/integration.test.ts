@@ -189,6 +189,8 @@ test("Integration - Full MCP to Agent forwarding, operations, security & edge ca
             for (const name of [
                 "indexer_install",
                 "indexer_index_github",
+                "indexer_context",
+                "indexer_chunks",
                 "indexer_dependencies",
                 "indexer_dependents",
                 "indexer_symbol_path",

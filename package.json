@@ -47,14 +47,6 @@
       {
         "command": "vortiqlabs-agent.getTunnel",
         "title": "VortiqLabs: Get Agent Tunnel URL and Port"
-      },
-      {
-        "command": "vortiqlabs-agent.connectOpenAITunnel",
-        "title": "VortiqLabs: Connect OpenAI Secure MCP Tunnel"
-      },
-      {
-        "command": "vortiqlabs-agent.disconnectOpenAITunnel",
-        "title": "VortiqLabs: Disconnect OpenAI Secure MCP Tunnel"
       }
     ],
     "configuration": {
@@ -69,11 +61,6 @@
           "type": "string",
           "default": "oa_8WSUjKeAT6CaaJLdZ1Lsr-oHu-ow3LHT",
           "description": "OAuth client ID registered for the VortiqLabs Agent extension."
-        },
-        "vortiqlabsAgent.openAITunnelRuntime": {
-          "type": "string",
-          "default": "tunnel-client-runtime-cloudflared",
-          "description": "Managed OpenAI tunnel runtime is installed automatically in VS Code extension storage."
         }
       }
     },
@@ -104,15 +91,16 @@
     "compile": "npm run check-types && npm run lint && node esbuild.js",
     "watch": "npm-run-all -p watch:*",
     "watch:esbuild": "node esbuild.js --watch",
-    "watch:tsc": "tsc --noEmit --watch --project tsconfig.json",
+    "watch:tsc": "node scripts/build-indexer-sdk.mjs && tsc --noEmit --watch --project tsconfig.json",
     "package": "npm run check-types && npm run lint && node esbuild.js --production",
-    "compile-tests": "tsc -p . --outDir out",
-    "watch-tests": "tsc -p . -w --outDir out",
+    "compile-tests": "node scripts/build-indexer-sdk.mjs && tsc -p . --outDir out",
+    "watch-tests": "node scripts/build-indexer-sdk.mjs && tsc -p . -w --outDir out",
     "pretest": "npm run compile-tests && npm run compile && npm run lint",
     "check-types": "tsc --noEmit",
     "lint": "eslint src",
     "test": "npm run test:unit",
-    "test:unit": "npm run compile-tests && node --test out/test/**/*.test.js"
+    "test:unit": "npm run compile-tests && node --test out/test/**/*.test.js",
+    "precheck-types": "node scripts/build-indexer-sdk.mjs"
   },
   "devDependencies": {
     "@types/mocha": "^10.0.10",
@@ -125,7 +113,13 @@
     "eslint": "^10.5.0",
     "npm-run-all": "^4.1.5",
     "typescript": "^6.0.3",
-    "typescript-eslint": "^8.61.1"
+    "typescript-eslint": "^8.61.1",
+    "@vortiqlabs/codebase-indexer": "file:vendor/codebase-indexer",
+    "@msgpack/msgpack": "^3.1.2",
+    "ignore": "^7.0.5",
+    "tar": "^7.5.22",
+    "tree-sitter-wasms": "^0.1.13",
+    "web-tree-sitter": "^0.25.10"
   },
   "overrides": {
     "diff": "^8.0.4",

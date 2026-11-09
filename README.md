@@ -125,9 +125,11 @@ Follow this workflow to connect ChatGPT to your active workspace inside GitHub C
 | `git_apply_patch` | Applies unified git patch via VS Code extension Agent API. |
 | `run_terminal` | Executes a complete non-interactive command from the workspace root. Use it for tests, builds, linters, and Git inspection; inspect stdout, stderr, and the exit code. Defaults to 30 seconds and is capped at 120 seconds. |
 | `file_diagnostics` | Returns every current VS Code error and warning for one workspace-relative file, including severity, message, source/code, and 1-based ranges. Use it after editing or when validating a file. |
-| `indexer_install` | Lazily downloads the pinned Codebase Indexer runtime for the current OS/architecture, verifies SHA-256, and reuses the cached install. |
+| `indexer_install` | Verifies the bundled Codebase Indexer SDK and its parser/GitHub worker assets. Core indexing needs no separate runtime download. |
 | `indexer_status` | Inspects Codebase Indexer status via VS Code extension Agent API. |
-| `indexer_search` | Hybrid, lexical, or semantic search with a result limit. |
+| `indexer_search` | Hybrid or lexical search; semantic mode requires an explicitly configured embedding provider. |
+| `indexer_context` | Builds LLM-ready context from relevant indexed files, symbols, relations, and chunks within file/token budgets. |
+| `indexer_chunks` | Retrieves indexed code chunks with query/file filters and pagination. |
 | `indexer_symbols` | Finds indexed symbol definitions. |
 | `indexer_references` | Finds symbol references. |
 | `indexer_callers` / `indexer_callees` | Explores caller and callee relationships. |
@@ -145,7 +147,7 @@ Follow this workflow to connect ChatGPT to your active workspace inside GitHub C
 | `indexer_dashboard` / `indexer_stop_dashboard` | Starts or stops the local-only web dashboard. |
 | `index_workspace` | Indexes the active workspace or a validated subdirectory, with size/worker/profile options. |
 
-The standalone runtime is pinned to Codebase Indexer `0.1.7` and downloaded on first indexer use (or by calling `indexer_install`). It is stored under the extension's global storage, by version and platform, so it is not bundled into the VSIX. The runtime downloads are checksum-verified against the release artifact SHA-256 values. Supported targets are Linux x64/ARM64, macOS x64/ARM64, and Windows x64/ARM64.
+Core indexing now uses the official `@vortiqlabs/codebase-indexer` TypeScript SDK (`createCodebase`) from upstream v0.2.0. The SDK source is pinned to upstream commit `364f30be53fe0e167144cb0794fe37de8fb45895` under `vendor/codebase-indexer` because the GitHub Packages registry currently publishes only through 0.1.7; the SDK API used here is not yet available in those published versions. Its Tree-sitter grammars, WASM runtime, and GitHub import worker are built into the extension. Indexing, search, graph queries, context retrieval, GitHub imports, and incremental watch mode use the SDK directly. The dashboard and raw binary-index inspection remain on the legacy standalone runtime because those capabilities are not currently exposed by the stable SDK API. See `THIRD_PARTY_NOTICES.md` for attribution and licensing.
 
 ---
 
@@ -169,7 +171,7 @@ The VS Code Extension API is extensive and not every API is a suitable MCP tool.
 
 - **Extension Layer Authorization**: Every workspace operation is validated and executed by the VS Code extension Agent.
 - **Loopback Binding**: Extension Agent API is strictly bound to `127.0.0.1:43127` loopback.
-- **MCP Gateway Authentication**: Disabled for the public MCP endpoint. The loopback extension Agent remains protected by `VORTIQLABS_AGENT_AUTH_TOKEN`..
+- **MCP Gateway Authentication**: When OneAuth is configured, the MCP endpoint advertises OAuth Protected Resource Metadata and validates each bearer token against OneAuth `/api/oauth/userinfo`. The loopback extension Agent remains protected by `VORTIQLABS_AGENT_AUTH_TOKEN`.
 - **Path Traversal Protection**: Enforces canonical path verification (`realpath`) to block `../` traversal or symlink escapes.
 - **Graceful Shutdown**: Stopping the extension cleanly stops its local Agent server.
 
@@ -192,4 +194,3 @@ For the OAuth client in OneAuth, register this exact redirect URI:
 The extension uses Authorization Code + PKCE (S256) and requests the `openid profile email` scopes. The default OAuth client ID and OneAuth base URL are contributed extension settings; override them through VS Code Settings if your deployment uses different values. Tunnel creation is manual, so the extension does not request the `tunnel:manage` scope. Access and refresh tokens are stored using VS Code's SecretStorage, not in workspace files.
 
 After signing in, select **Get tunnel URL + port**. The extension calls `POST /api/agent/tunnel` with the OAuth bearer token and displays the returned public URL, hostname, and port. This action provisions/displays the tunnel allocation; it does not by itself guarantee end-to-end traffic forwarding through the shared gateway.
-

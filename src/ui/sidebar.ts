@@ -8,8 +8,6 @@ export interface SidebarActions {
     signOut: () => Promise<void>;
     getUserInfo: () => Promise<OneAuthUserInfo | undefined>;
     provisionTunnel: () => Promise<TunnelInfo>;
-    connectOpenAITunnel: () => Promise<string>;
-    disconnectOpenAITunnel: () => Promise<void>;
     resolveCodeChange: (id: string, decision: "accept" | "decline") => Promise<unknown>;
 }
 
@@ -152,32 +150,6 @@ export class AgentSidebarProvider implements vscode.WebviewViewProvider {
                     this.post({ type: "actionBusy", busy: false });
                 }
             }
-            if (message?.type === "connectOpenAITunnel") {
-                this.busyAction = true;
-                this.post({ type: "actionBusy", busy: true });
-                try {
-                    const result = await this.actions.connectOpenAITunnel();
-                    void vscode.window.showInformationMessage(result);
-                } catch (error) {
-                    void vscode.window.showErrorMessage(error instanceof Error ? error.message : String(error));
-                } finally {
-                    this.busyAction = false;
-                    this.post({ type: "actionBusy", busy: false });
-                }
-            }
-            if (message?.type === "disconnectOpenAITunnel") {
-                this.busyAction = true;
-                this.post({ type: "actionBusy", busy: true });
-                try {
-                    await this.actions.disconnectOpenAITunnel();
-                    void vscode.window.showInformationMessage("OpenAI Secure MCP Tunnel disconnected.");
-                } catch (error) {
-                    void vscode.window.showErrorMessage(error instanceof Error ? error.message : String(error));
-                } finally {
-                    this.busyAction = false;
-                    this.post({ type: "actionBusy", busy: false });
-                }
-            }
             if (message?.type === "provisionTunnel") {
                 this.busyAction = true;
                 this.post({ type: "actionBusy", busy: true });
@@ -246,58 +218,125 @@ export class AgentSidebarProvider implements vscode.WebviewViewProvider {
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}';">
 <title>VortiqLabs Agent</title>
 <style>
-:root{color-scheme:dark;--panel:var(--vscode-sideBar-background);--border:var(--vscode-panel-border);--fg:var(--vscode-foreground);--muted:var(--vscode-descriptionForeground);--accent:var(--vscode-textLink-foreground);--green:var(--vscode-testing-iconPassed,#4ec9b0);--red:var(--vscode-testing-iconFailed,#f48771);--yellow:var(--vscode-editorWarning-foreground,#cca700)}
-*{box-sizing:border-box}body{margin:0;padding:12px 12px 0;display:flex;flex-direction:column;height:100vh;overflow:hidden;background:var(--panel);color:var(--fg);font:12px/1.5 var(--vscode-font-family)}header{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:12px}h1{font-size:14px;margin:0;font-weight:650;letter-spacing:.2px}.sub{color:var(--muted);font-size:11px}.actions{display:flex;gap:5px;flex-wrap:wrap}button{background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);border:1px solid var(--border);border-radius:5px;padding:5px 8px;cursor:pointer;font:inherit}button:hover{background:var(--vscode-button-secondaryHoverBackground)}button:disabled{opacity:.55;cursor:wait}.review-actions{display:flex;gap:6px;padding:8px 9px;border-top:1px solid var(--border)}.review-actions .accept{background:var(--vscode-testing-iconPassed,#2e8b57);color:#fff;border-color:transparent}.review-actions .decline{background:var(--vscode-button-secondaryBackground);color:var(--vscode-errorForeground,#f48771)}.review-status{padding:5px 9px;color:var(--muted);font-size:11px;border-top:1px solid var(--border)}.primary{background:var(--vscode-button-background);color:var(--vscode-button-foreground);border-color:transparent}.primary:hover{background:var(--vscode-button-hoverBackground)}#account{border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:12px}.account-row{display:flex;justify-content:space-between;align-items:center;gap:8px}.section-title{font-weight:650;font-size:12px}.muted{color:var(--muted)}.profile{margin-top:9px;padding:9px;border-radius:6px;background:color-mix(in srgb,var(--panel) 82%,var(--fg) 6%);overflow-wrap:anywhere}.profile-name{font-weight:650;font-size:13px}.profile .sub{margin-top:2px}#auth-status{font-size:11px;color:var(--muted);margin:3px 0 9px}.tunnel{margin-top:10px;padding-top:9px;border-top:1px solid var(--border);overflow-wrap:anywhere}.tunnel-line{margin-top:5px}.tunnel-label{color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.5px}.tunnel-value{font-family:var(--vscode-editor-font-family,monospace);font-size:11px;overflow-wrap:anywhere;user-select:text}#status{display:flex;gap:6px;align-items:center;color:var(--muted);margin-bottom:10px}.dot{width:7px;height:7px;border-radius:50%;background:var(--green)}#feed{display:flex;flex-direction:column;gap:9px}.item{border:1px solid var(--border);border-radius:8px;overflow:hidden;background:color-mix(in srgb,var(--panel) 88%,var(--fg) 4%)}.item-head{padding:8px 9px;display:flex;justify-content:space-between;gap:8px;align-items:flex-start}.tool{font-weight:650;overflow-wrap:anywhere}.meta{font-size:10px;color:var(--muted);white-space:nowrap}.pill{font-size:10px;padding:1px 5px;border-radius:10px;background:var(--vscode-badge-background);color:var(--vscode-badge-foreground)}.pill.running{color:var(--yellow)}.pill.error{color:var(--red)}.pill.success{color:var(--green)}details{border-top:1px solid var(--border)}summary{cursor:pointer;color:var(--muted);padding:5px 9px;user-select:none}pre{margin:0;padding:8px;white-space:pre-wrap;overflow-wrap:anywhere;max-height:360px;overflow:auto;background:var(--vscode-textCodeBlock-background);font:11px/1.5 var(--vscode-editor-font-family,monospace)}.diff .add{color:var(--green);display:block}.diff .del{color:var(--red);display:block}.stream{border-top:1px solid var(--border)}.stream-title{padding:5px 9px;color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.6px}.empty{padding:28px 8px;text-align:center;color:var(--muted);border:1px dashed var(--border);border-radius:8px}.command{color:var(--accent);font-family:var(--vscode-editor-font-family,monospace);overflow-wrap:anywhere}#user-bar{position:fixed;bottom:0;left:0;right:0;z-index:5;display:flex;align-items:center;gap:9px;padding:10px 12px;background:var(--vscode-sideBar-background);border-top:1px solid var(--border);min-height:58px}.avatar{width:32px;height:32px;flex:0 0 32px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:var(--vscode-button-secondaryBackground);color:var(--fg);font-weight:700;overflow:hidden}.avatar img{width:100%;height:100%;object-fit:cover}.user-details{min-width:0;flex:1;overflow:hidden}.user-details .profile-name,.user-details .sub{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-
-/* Polished, compact sidebar layout and responsive activity cards */
-:root{--card:var(--vscode-editorWidget-background,var(--vscode-sideBar-background));--line:var(--vscode-panel-border);--soft:var(--vscode-input-background)}
-body{padding:14px 12px 0;letter-spacing:.1px}
-header{position:sticky;top:0;z-index:4;padding:8px 0 12px;background:var(--panel);border-bottom:1px solid var(--line);margin-bottom:12px}
-h1{font-size:15px;letter-spacing:-.25px}
+:root{
+ color-scheme:light dark;
+ --md-primary:var(--vscode-button-background,#6750a4);
+ --md-on-primary:var(--vscode-button-foreground,#fff);
+ --md-primary-container:color-mix(in srgb,var(--md-primary) 18%,var(--vscode-sideBar-background,#1e1e1e));
+ --md-on-primary-container:var(--vscode-foreground,#e6e1e5);
+ --md-secondary:var(--vscode-textLink-foreground,#b8a4e8);
+ --md-secondary-container:color-mix(in srgb,var(--md-secondary) 13%,var(--vscode-sideBar-background,#1e1e1e));
+ --md-tertiary:var(--vscode-terminal-ansiBlue,#8ab4f8);
+ --md-error:var(--vscode-errorForeground,#f2b8b5);
+ --md-success:var(--vscode-testing-iconPassed,#81c995);
+ --md-warning:var(--vscode-editorWarning-foreground,#e6c36a);
+ --md-surface:var(--vscode-sideBar-background,#1e1e1e);
+ --md-surface-1:color-mix(in srgb,var(--md-surface) 95%,var(--vscode-foreground,#fff) 5%);
+ --md-surface-2:color-mix(in srgb,var(--md-surface) 91%,var(--vscode-foreground,#fff) 9%);
+ --md-surface-3:color-mix(in srgb,var(--md-surface) 86%,var(--vscode-foreground,#fff) 14%);
+ --md-on-surface:var(--vscode-foreground,#e6e1e5);
+ --md-on-surface-variant:var(--vscode-descriptionForeground,#b9b3c2);
+ --md-outline:var(--vscode-panel-border,#49454f);
+ --md-outline-variant:color-mix(in srgb,var(--md-outline) 60%,transparent);
+ --md-shape-xs:8px;--md-shape-sm:12px;--md-shape-md:16px;--md-shape-lg:22px;--md-shape-xl:28px;
+ --md-elevation-1:0 1px 2px #00000018,0 1px 3px #00000012;
+ --md-elevation-2:0 3px 8px #00000020,0 1px 3px #00000014;
+}
+*{box-sizing:border-box}
+html,body{height:100%;min-height:100%;}
+body{margin:0;padding:14px 12px 0;display:flex;flex-direction:column;gap:12px;overflow:hidden;background:var(--md-surface);color:var(--md-on-surface);font:13px/1.5 var(--vscode-font-family,system-ui,sans-serif);letter-spacing:.1px}
+button{font:inherit;cursor:pointer;border:0;display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:34px;padding:7px 14px;border-radius:999px;font-weight:600;transition:background .18s ease,box-shadow .18s ease,transform .18s ease,color .18s ease}
+button:focus-visible,summary:focus-visible{outline:2px solid var(--vscode-focusBorder,#b8a4e8);outline-offset:3px}
+button:disabled{opacity:.5;cursor:wait;transform:none}
+button svg,.icon{width:18px;height:18px;flex:0 0 18px;display:block}
+button.primary{background:var(--md-primary);color:var(--md-on-primary);box-shadow:var(--md-elevation-1)}
+button.primary:hover{box-shadow:var(--md-elevation-2);filter:brightness(1.08)}
+button.tonal{background:var(--md-secondary-container);color:var(--md-on-surface)}
+button.tonal:hover{background:var(--md-surface-3)}
+button.outlined{background:transparent;color:var(--md-on-surface);border:1px solid var(--md-outline)}
+button.outlined:hover{background:var(--md-surface-2)}
+button.text-button{background:transparent;color:var(--md-secondary);padding-inline:10px}
+button.text-button:hover{background:var(--md-secondary-container)}
+button.icon-button{width:36px;height:36px;min-height:36px;padding:0;border-radius:50%;background:var(--md-surface-2);color:var(--md-on-surface-variant)}
+button.icon-button:hover{background:var(--md-surface-3);color:var(--md-on-surface)}
+header{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:4px 0 12px;border-bottom:1px solid var(--md-outline-variant);flex:0 0 auto}
+.brand{display:flex;align-items:center;gap:10px;min-width:0}
+.brand-mark{width:38px;height:38px;display:grid;place-items:center;border-radius:14px;background:var(--md-primary-container);color:var(--md-secondary)}
+.brand-mark svg{width:22px;height:22px}
+h1{margin:0;font-size:15px;font-weight:700;letter-spacing:-.25px;line-height:1.25}
+.sub{font-size:11px;color:var(--md-on-surface-variant)}
 header .sub{margin-top:3px}
-.actions{flex-wrap:nowrap}
-button{min-height:28px;border-radius:7px;padding:5px 9px;transition:background .12s ease,border-color .12s ease}
-button:focus-visible,summary:focus-visible{outline:1px solid var(--vscode-focusBorder);outline-offset:2px}
-#account{border:0;padding:0;margin:0 0 12px}
-#status{padding:9px 10px;margin:0 0 10px;border:1px solid var(--line);border-radius:10px;background:var(--card);font-size:11px}
-.dot{flex:0 0 7px;box-shadow:0 0 0 3px color-mix(in srgb,var(--green) 15%,transparent)}
-#feed{gap:10px}
-.item{border:1px solid var(--line);border-radius:10px;background:var(--card);box-shadow:0 1px 2px #00000012;transition:border-color .15s ease}
-.item:hover{border-color:var(--vscode-focusBorder)}
-.item-head{padding:10px 10px 9px;align-items:center}
-.tool{font-size:12px;line-height:1.4}
-.meta{margin-top:3px;white-space:normal;line-height:1.5}
-.pill{display:inline-flex;align-items:center;gap:4px;flex-shrink:0;padding:3px 7px;font-weight:600;border-radius:999px;white-space:nowrap}
-.pill.running{background:color-mix(in srgb,var(--yellow) 16%,var(--card))}
-.pill.success{background:color-mix(in srgb,var(--green) 14%,var(--card))}
-.pill.error{background:color-mix(in srgb,var(--red) 14%,var(--card))}
-details{border-top:1px solid color-mix(in srgb,var(--line) 70%,transparent)}
-summary{padding:7px 10px;display:flex;align-items:center;gap:6px;font-size:11px}
-summary:hover{color:var(--fg);background:color-mix(in srgb,var(--fg) 4%,transparent)}
-pre{padding:10px;max-height:280px;line-height:1.6;tab-size:2}
-.command{margin-top:4px;padding:4px 6px;border-radius:5px;background:var(--soft);font-size:10px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere}
-.stream{border-top:1px solid var(--line);background:color-mix(in srgb,var(--vscode-terminal-background,var(--card)) 80%,transparent)}
-.stream-title{display:flex;align-items:center;gap:6px;padding:8px 10px;font-weight:650;letter-spacing:.25px;text-transform:none;font-size:11px}
-.stream pre{max-height:240px;white-space:pre-wrap;overflow-wrap:anywhere}
-.review-actions{padding:9px 10px;gap:8px}
-.review-actions button{flex:1;min-height:32px;font-weight:650}
-.review-actions .accept{background:var(--vscode-testing-iconPassed,#2e8b57)}
-.review-actions .decline{border-color:color-mix(in srgb,var(--red) 35%,var(--line))}
-.review-status{padding:8px 10px}
-.empty{padding:22px 12px;border-radius:10px;line-height:1.7;flex:0 0 auto}
-#user-bar{padding:10px 12px;min-height:66px;background:var(--vscode-sideBar-background);border-top:1px solid var(--line);box-shadow:0 -5px 16px #0000000a}
-.avatar{width:34px;height:34px;flex-basis:34px;border:1px solid var(--line)}
-.user-details .profile-name{font-size:12px}
-.user-details .sub{font-size:10px}
-@media (max-width:320px){body{padding-left:9px;padding-right:9px}.item-head{padding:8px}.review-actions{flex-direction:column}.actions button{padding:4px 7px}}
-#status{flex-shrink:0}#feed{flex:1 1 0;min-height:0;max-height:100%;overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;align-content:start}#pending-reviews{position:fixed;left:0;right:0;bottom:66px;z-index:10;display:block;max-height:34vh;overflow-y:auto;flex-shrink:0;padding:9px 12px;background:var(--vscode-sideBar-background);border-top:1px solid var(--border);box-shadow:0 -5px 16px #00000012}#pending-reviews:not([hidden]){display:block}.pending-review-title{display:flex;justify-content:space-between;gap:8px;font-weight:650;margin-bottom:5px}.pending-review-files,.pending-review-paths{color:var(--muted);font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.pending-review-totals{display:flex;align-items:center;gap:9px;font-size:12px;font-weight:650;margin-bottom:4px}.pending-review-totals .added,.change-count .added{color:var(--vscode-gitDecoration-addedResourceForeground,#81b88b)}.pending-review-totals .removed,.change-count .removed{color:var(--vscode-gitDecoration-deletedResourceForeground,#f48771)}.pending-review-paths{margin-bottom:7px}.pending-review-actions{display:flex;gap:7px}.pending-review-actions button{flex:1;font-weight:650;min-height:32px}.pending-review-actions .accept{background:var(--vscode-testing-iconPassed,#2e8b57);color:#fff;border-color:transparent}.pending-review-actions .decline{color:var(--vscode-errorForeground,#f48771)}#user-bar{position:fixed;left:0;right:0;bottom:0;z-index:11;flex-shrink:0;margin-top:0}@media(max-width:320px){#pending-reviews{bottom:66px;max-height:38vh;padding:7px}.pending-review-actions{gap:5px}.pending-review-actions button{padding:5px}}
-.item-head{display:flex;align-items:center;justify-content:space-between;gap:8px}.item-heading{display:flex;align-items:baseline;flex-wrap:wrap;gap:7px;min-width:0}.item-heading .meta{margin:0}.item-status{display:flex;align-items:center;justify-content:flex-end;gap:6px;flex-shrink:0}.duration{font-size:10px;color:var(--muted);white-space:nowrap}.command-details{border-top:1px solid var(--line)}.command-details>summary{padding:7px 10px}.command-details pre{white-space:pre-wrap;overflow-wrap:anywhere}.change-count{display:flex;gap:8px;align-items:center;padding:6px 10px;font-size:11px;font-weight:650;border-top:1px solid var(--line)}
-.command-details{border-top:1px solid var(--border)}.command-details>summary{padding:7px 10px}.command-details pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:220px;overflow:auto}.item-heading{display:flex;align-items:baseline;gap:7px;flex-wrap:wrap;min-width:0}.item-status{display:flex;align-items:center;gap:6px;flex-shrink:0}.duration{font-size:10px;color:var(--muted);white-space:nowrap}#signed-out{position:fixed;inset:0;z-index:100;display:flex;align-items:center;justify-content:center;background:var(--vscode-sideBar-background);padding:20px}#signed-out[hidden]{display:none}#sign-in{min-width:150px;min-height:38px;font-weight:650}body.signed-out header,body.signed-out #account,body.signed-out #pending-reviews,body.signed-out #user-bar{visibility:hidden}body.signed-out #signed-out{visibility:visible}</style></head><body>
-<header><div><h1>VortiqLabs Agent</h1><div class="sub">Workspace agent · live activity</div></div><div class="actions"><button id="refresh" title="Refresh activity">↻</button><button id="clear">Clear</button></div></header>
-<section id="signed-out" aria-label="Sign in to VortiqLabs Agent"><button id="sign-in" class="primary">Sign in with OneAuth</button></section>
+.actions{display:flex;gap:6px;align-items:center;flex:0 0 auto}
+#account{display:flex;flex-direction:column;gap:10px;flex:0 0 auto}
+#status{display:flex;align-items:center;gap:9px;padding:11px 13px;border-radius:var(--md-shape-md);background:var(--md-surface-2);color:var(--md-on-surface-variant);font-size:12px}
+.dot{width:9px;height:9px;flex:0 0 9px;border-radius:50%;background:var(--md-success);box-shadow:0 0 0 4px color-mix(in srgb,var(--md-success) 16%,transparent)}
+#count{font-weight:550}
+.activity-heading{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:0 2px;margin:0 0 1px}
+.activity-heading h2{font-size:13px;font-weight:700;margin:0;letter-spacing:.1px}
+.activity-heading .sub{font-variant-numeric:tabular-nums}
+#feed{display:flex;flex-direction:column;gap:10px;flex:1 1 0;min-height:0;overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;align-content:start;padding:1px 2px 12px}
+.item{border:1px solid var(--md-outline-variant);border-radius:var(--md-shape-lg);overflow:hidden;background:var(--md-surface-1);box-shadow:var(--md-elevation-1);transition:border-color .18s ease,box-shadow .18s ease}
+.item:hover{border-color:color-mix(in srgb,var(--md-secondary) 48%,var(--md-outline));box-shadow:var(--md-elevation-2)}
+.item-head{padding:12px 13px 10px;display:flex;justify-content:space-between;gap:10px;align-items:center}
+.item-heading{display:flex;align-items:baseline;flex-wrap:wrap;gap:6px;min-width:0}
+.tool{font-weight:700;font-size:12px;line-height:1.4;overflow-wrap:anywhere}
+.meta,.duration{font-size:10px;color:var(--md-on-surface-variant);white-space:nowrap}
+.item-status{display:flex;align-items:center;justify-content:flex-end;gap:7px;flex-shrink:0}
+.pill{display:inline-flex;align-items:center;gap:5px;padding:4px 9px;border-radius:999px;background:var(--md-surface-3);color:var(--md-on-surface-variant);font-size:10px;font-weight:700;white-space:nowrap;text-transform:capitalize}
+.pill:before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor}
+.pill.running{background:color-mix(in srgb,var(--md-warning) 16%,var(--md-surface));color:var(--md-warning)}
+.pill.success{background:color-mix(in srgb,var(--md-success) 15%,var(--md-surface));color:var(--md-success)}
+.pill.error{background:color-mix(in srgb,var(--md-error) 16%,var(--md-surface));color:var(--md-error)}
+details{border-top:1px solid var(--md-outline-variant)}
+summary{cursor:pointer;list-style:none;display:flex;align-items:center;gap:8px;padding:9px 13px;color:var(--md-on-surface-variant);font-size:11px;font-weight:600;user-select:none;transition:background .15s ease,color .15s ease}
+summary::-webkit-details-marker{display:none}
+summary:after{content:"";width:7px;height:7px;margin-left:auto;border-right:1.6px solid currentColor;border-bottom:1.6px solid currentColor;transform:rotate(45deg) translateY(-2px);transition:transform .15s ease}
+details[open]>summary:after{transform:rotate(225deg) translate(-1px,-1px)}
+summary:hover{background:var(--md-surface-2);color:var(--md-on-surface)}
+pre{margin:0;padding:12px 13px;white-space:pre-wrap;overflow-wrap:anywhere;max-height:280px;overflow:auto;background:var(--vscode-textCodeBlock-background,var(--md-surface-2));color:var(--md-on-surface);font:11px/1.65 var(--vscode-editor-font-family,monospace);tab-size:2}
+.diff .add{color:var(--md-success);display:block}.diff .del{color:var(--md-error);display:block}
+.command{margin:0 12px 12px;padding:10px;border-radius:var(--md-shape-sm);background:var(--md-surface-2);font-size:10px;line-height:1.6;white-space:pre-wrap;overflow-wrap:anywhere}
+.command-details{border-top:1px solid var(--md-outline-variant)}.command-details>summary{padding:9px 13px}.command-details pre{max-height:220px}
+.stream{border-top:1px solid var(--md-outline-variant);background:var(--md-surface-2)}
+.stream-title{padding:9px 13px;color:var(--md-on-surface-variant);font-size:11px;font-weight:700}
+.stream pre{max-height:220px;white-space:pre-wrap;overflow-wrap:anywhere}
+.review-actions{display:flex;gap:8px;padding:10px 12px;border-top:1px solid var(--md-outline-variant)}
+.review-actions button{flex:1;min-height:36px}
+.review-actions .accept,.pending-review-actions .accept{background:var(--md-primary);color:var(--md-on-primary)}
+.review-actions .decline,.pending-review-actions .decline{background:var(--md-secondary-container);color:var(--md-on-surface)}
+.review-status{padding:9px 13px;color:var(--md-on-surface-variant);font-size:11px;border-top:1px solid var(--md-outline-variant)}
+.empty{padding:28px 16px;text-align:center;color:var(--md-on-surface-variant);border:1px dashed var(--md-outline);border-radius:var(--md-shape-lg);background:var(--md-surface-1);line-height:1.7}
+#pending-reviews{position:fixed;left:0;right:0;bottom:66px;z-index:10;display:block;max-height:34vh;overflow-y:auto;padding:12px;background:var(--md-surface);border-top:1px solid var(--md-outline);box-shadow:0 -6px 20px #00000018}
+#pending-reviews[hidden]{display:none}
+.pending-review-title{display:flex;justify-content:space-between;gap:8px;font-weight:700;margin-bottom:7px}
+.pending-review-files,.pending-review-paths{color:var(--md-on-surface-variant);font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pending-review-totals{display:flex;align-items:center;gap:9px;font-size:12px;font-weight:700;margin-bottom:5px}
+.pending-review-totals .added,.change-count .added{color:var(--md-success)}.pending-review-totals .removed,.change-count .removed{color:var(--md-error)}
+.pending-review-paths{margin-bottom:9px}
+.pending-review-actions{display:flex;gap:8px}.pending-review-actions button{flex:1;min-height:36px}
+#user-bar{position:fixed;left:0;right:0;bottom:0;z-index:11;display:flex;align-items:center;gap:10px;padding:10px 13px;min-height:66px;background:var(--md-surface);border-top:1px solid var(--md-outline-variant);box-shadow:0 -4px 16px #0000000d}
+.avatar{width:36px;height:36px;flex:0 0 36px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:var(--md-primary-container);color:var(--md-secondary);font-weight:700;overflow:hidden}
+.avatar img{width:100%;height:100%;object-fit:cover}
+.user-details{min-width:0;flex:1;overflow:hidden}.user-details .profile-name,.user-details .sub{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.user-details .profile-name{font-size:12px;font-weight:650}
+#bar-state{padding:4px 8px;border-radius:999px;background:var(--md-secondary-container);color:var(--md-on-surface-variant);font-size:10px;font-weight:650}
+#signed-out{position:fixed;inset:0;z-index:100;display:flex;align-items:center;justify-content:center;background:var(--md-surface);padding:22px}
+#signed-out[hidden]{display:none}
+.sign-in-card{width:100%;max-width:300px;padding:24px 18px;border-radius:var(--md-shape-xl);background:var(--md-surface-2);text-align:center;box-shadow:var(--md-elevation-2)}
+.sign-in-mark{width:56px;height:56px;margin:0 auto 14px;display:grid;place-items:center;border-radius:20px;background:var(--md-primary-container);color:var(--md-secondary)}
+.sign-in-mark svg{width:30px;height:30px}
+.sign-in-card h2{font-size:18px;line-height:1.3;margin:0 0 7px;letter-spacing:-.3px}
+.sign-in-card p{margin:0 0 18px;color:var(--md-on-surface-variant);font-size:12px;line-height:1.6}
+#sign-in{width:100%;min-height:42px}
+body.signed-out header,body.signed-out #account,body.signed-out .activity-heading,body.signed-out #pending-reviews,body.signed-out #user-bar{visibility:hidden}
+.change-count{display:flex;gap:8px;align-items:center;padding:8px 13px;font-size:11px;font-weight:700;border-top:1px solid var(--md-outline-variant)}
+@media(max-width:320px){body{padding-inline:9px}.item-head{padding:10px}.item-status{gap:4px}.duration{display:none}.review-actions,.pending-review-actions{gap:5px}.review-actions button,.pending-review-actions button{padding-inline:8px}#pending-reviews{padding:9px;max-height:38vh}}
+@media(prefers-reduced-motion:reduce){*,*:before,*:after{transition:none!important;scroll-behavior:auto!important}}
+</style></head><body>
+<header><div class="brand"><div class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.2 20 7.6v8.8l-8 4.4-8-4.4V7.6l8-4.4Z"/><path d="m8.2 12 2.4 2.4 5.2-5.2"/></svg></div><div><h1>VortiqLabs Agent</h1><div class="sub">Workspace activity</div></div></div><div class="actions"><button id="refresh" class="icon-button" title="Refresh activity" aria-label="Refresh activity"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M5.6 9a7 7 0 0 1 11.6-2L20 12M4 12l2.8 5a7 7 0 0 0 11.6-2"/></svg></button><button id="clear" class="text-button">Clear</button></div></header>
+<section id="signed-out" aria-label="Sign in to VortiqLabs Agent"><div class="sign-in-card"><div class="sign-in-mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.2 20 7.6v8.8l-8 4.4-8-4.4V7.6l8-4.4Z"/><path d="M8.5 12h7M12 8.5v7"/></svg></div><h2>Your coding workspace, connected</h2><p>Sign in with OneAuth to connect your agent and manage secure workspace activity.</p><button id="sign-in" class="primary"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 17l5-5-5-5M15 12H3"/><path d="M12 3h6a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-6"/></svg>Sign in with OneAuth</button></div></section>
 <section id="account">
 
-<div id="status"><span class="dot"></span><span id="count">Listening for MCP requests…</span></div><main id="feed"><div class="empty">Waiting for the first MCP request</div></main>
+<div id="status"><span class="dot"></span><span id="count">Listening for MCP requests…</span></div></section><div class="activity-heading"><h2>Recent activity</h2><span class="sub">Live feed</span></div><main id="feed"><div class="empty">Waiting for the first MCP request</div></main>
 <section id="pending-reviews" hidden aria-label="Pending code changes"></section>
 <footer id="user-bar" aria-label="Signed-in account"><div id="avatar" class="avatar">?</div><div class="user-details"><div id="bar-name" class="profile-name">Not signed in</div><div id="bar-email" class="sub">OneAuth account</div></div><span id="bar-state" class="sub">Offline</span></footer>
 <script nonce="${nonce}">
@@ -352,7 +391,7 @@ function renderProfile(user){const name=user&&(user.name||user.preferred_usernam
 function details(title,body,isDiff=false){if(!body)return "";return '<details><summary>'+esc(title)+'</summary><pre class="'+(isDiff?'diff':'')+'">'+(isDiff?lines(body):esc(body))+'</pre></details>'}
 function lines(text){return String(text||"").split(String.fromCharCode(10)).map(line=>{const cls=line.startsWith("+")&&!line.startsWith("+++")?"add":line.startsWith("-")&&!line.startsWith("---")?"del":"";return '<span class="'+cls+'">'+esc(line)+'</span>'}).join("")}
 window.addEventListener("error",e=>{vscode.postMessage({type:"webviewError",message:e.message||"Unknown script error"});});
-window.addEventListener("message",e=>{const d=e.data;if(d?.type==="snapshot"){items=d.items||[];render();updatePendingReviews()}if(d?.type==="authState"){signedIn=Boolean(d.signedIn);renderAccount();renderProfile(window.oneAuthUser||null)}if(d?.type==="userInfo"){window.oneAuthUser=d.userInfo||null;renderProfile(window.oneAuthUser)}});
+window.addEventListener("message",e=>{const d=e.data;if(d?.type==="snapshot"){items=d.items||[];render();updatePendingReviews()}if(d?.type==="authState"){signedIn=Boolean(d.signedIn);renderAccount();renderProfile(window.oneAuthUser||null)}if(d?.type==="actionBusy"){busy=Boolean(d.busy);renderAccount();}if(d?.type==="userInfo"){window.oneAuthUser=d.userInfo||null;renderProfile(window.oneAuthUser)}});
 document.getElementById("sign-in").onclick=()=>vscode.postMessage({type:"signIn"});document.getElementById("refresh").onclick=()=>vscode.postMessage({type:"refresh"});document.getElementById("clear").onclick=()=>vscode.postMessage({type:"clear"});document.getElementById("feed").addEventListener("click",e=>{const button=e.target.closest("button[data-change-review]");if(!button)return;const id=button.getAttribute("data-change-id");const decision=button.getAttribute("data-change-review");if(!id||(decision!=="accept"&&decision!=="decline"))return;document.querySelectorAll("button[data-change-review]").forEach(b=>{if(b.getAttribute("data-change-id")===id)b.disabled=true});vscode.postMessage({type:"resolveCodeChange",id,decision})});document.getElementById("pending-reviews").addEventListener("click",e=>{const button=e.target.closest("button[data-review-batch]");if(!button)return;const decision=button.getAttribute("data-review-batch");if(decision!=="accept"&&decision!=="decline")return;const ids=new Set();const scan=(value,depth=0)=>{if(depth>6||value==null)return;let obj=value;if(typeof obj==="string"){try{obj=JSON.parse(obj)}catch{return}}if(Array.isArray(obj)){for(const item of obj)scan(item,depth+1);return}if(typeof obj!=="object")return;if(obj.changeReview&&typeof obj.changeReview.id==="string"&&obj.changeReview.status!=="accepted"&&obj.changeReview.status!=="declined")ids.add(obj.changeReview.id);for(const key of ["resultText","result","data","output","text","content","structuredContent"])if(obj[key]!==undefined)scan(obj[key],depth+1)};for(const item of items)scan(item.resultText);button.disabled=true;const buttons=document.querySelectorAll("#pending-reviews button");buttons.forEach(b=>b.disabled=true);(async()=>{for(const id of ids){vscode.postMessage({type:"resolveCodeChange",id,decision});await new Promise(resolve=>setTimeout(resolve,120))}setTimeout(()=>{buttons.forEach(b=>b.disabled=false)},1500)})()});renderAccount();vscode.postMessage({type:"ready"});
 </script></body></html>`;
     }

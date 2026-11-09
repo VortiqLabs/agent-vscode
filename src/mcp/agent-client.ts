@@ -4,11 +4,13 @@ import { randomUUID } from "crypto";
 export interface AgentClientOptions {
     baseUrl?: string;
     authToken?: string;
+    requestHandler?: (request: AgentRequest) => Promise<AgentResponse>;
 }
 
 export class AgentClient {
     private readonly baseUrl: string;
     private readonly authToken?: string;
+    private readonly requestHandler?: (request: AgentRequest) => Promise<AgentResponse>;
 
     constructor(options: AgentClientOptions = {}) {
         const rawUrl = options.baseUrl || process.env.VORTIQLABS_AGENT_URL || "http://127.0.0.1:43127";
@@ -16,6 +18,7 @@ export class AgentClient {
         this.authToken =
             options.authToken ||
             process.env.VORTIQLABS_AGENT_AUTH_TOKEN;
+        this.requestHandler = options.requestHandler;
     }
 
     getBaseUrl(): string {
@@ -29,6 +32,14 @@ export class AgentClient {
             tool,
             arguments: args
         };
+
+        if (this.requestHandler) {
+            const directResponse = await this.requestHandler(requestPayload);
+            if (!directResponse.success) {
+                throw new Error(directResponse.error.message);
+            }
+            return directResponse.result as T;
+        }
 
         const targetUrl = `${this.baseUrl}/agent`;
         const headers: Record<string, string> = {

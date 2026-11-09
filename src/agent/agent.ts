@@ -57,7 +57,13 @@ export class Agent {
         this.gitTool = new GitTool(this.workspaceManager, rootPath);
         this.terminalTool = new TerminalTool(this.workspaceManager);
         this.runtimeManager = new IndexerRuntimeManager(context);
-        this.indexer = new IndexerService(this.runtimeManager, rootPath);
+        const extensionPath = context && typeof context === "object" && "extensionUri" in context
+            ? (context as { extensionUri?: { fsPath?: string } }).extensionUri?.fsPath
+            : undefined;
+        const sdkRuntimeRoot = extensionPath
+            ? path.join(extensionPath, "dist", "indexer-runtime")
+            : path.join(process.cwd(), "dist", "indexer-runtime");
+        this.indexer = new IndexerService(this.runtimeManager, rootPath, sdkRuntimeRoot);
     }
 
     async resolveChangeReview(id: string, decision: "accept" | "decline"): Promise<{ id: string; status: "accepted" | "declined"; paths: string[] }> {
@@ -317,93 +323,113 @@ export class Agent {
                 if (requestedPath && !safePath) {
                     throw new Error(`Index path is outside the active workspace or invalid: ${requestedPath}`);
                 }
-                return this.indexer.cli.index(safePath, this.indexerOptions(request.arguments));
+                return this.indexer.index(safePath, this.indexerOptions(request.arguments));
             }
 
             case "indexer.index_github":
-                return this.indexer.cli.indexGithub(
+                return this.indexer.indexGithub(
                     this.requireString(request.arguments, "repository"),
                     this.indexerOptions(request.arguments)
                 );
 
             case "indexer.status":
-                return this.indexer.cli.status(this.indexerOptions(request.arguments));
+                return this.indexer.status(this.indexerOptions(request.arguments));
 
             case "indexer.search":
-                return this.indexer.cli.search(
+                return this.indexer.search(
                     this.requireString(request.arguments, "query"),
                     this.indexerOptions(request.arguments)
                 );
 
+            case "indexer.context":
+                return this.indexer.context(
+                    this.requireString(request.arguments, "query"),
+                    {
+                        indexDir: this.optionalString(request.arguments, "indexDir"),
+                        maxFiles: this.optionalNumber(request.arguments, "maxFiles"),
+                        maxTokens: this.optionalNumber(request.arguments, "maxTokens"),
+                        includeRelatedFiles: request.arguments.includeRelatedFiles !== false
+                    }
+                );
+
+            case "indexer.chunks":
+                return this.indexer.chunks({
+                    indexDir: this.optionalString(request.arguments, "indexDir"),
+                    query: this.optionalString(request.arguments, "query"),
+                    filePath: this.optionalString(request.arguments, "filePath"),
+                    limit: this.optionalNumber(request.arguments, "limit"),
+                    offset: this.optionalNumber(request.arguments, "offset")
+                });
+
             case "indexer.symbols":
-                return this.indexer.cli.symbols(
+                return this.indexer.symbols(
                     this.requireString(request.arguments, "query"),
                     this.indexerOptions(request.arguments)
                 );
 
             case "indexer.references":
-                return this.indexer.cli.references(
+                return this.indexer.references(
                     this.requireString(request.arguments, "query"),
                     this.indexerOptions(request.arguments)
                 );
 
             case "indexer.callers":
-                return this.indexer.cli.callers(
+                return this.indexer.callers(
                     this.requireString(request.arguments, "query"),
                     this.indexerOptions(request.arguments)
                 );
 
             case "indexer.callees":
-                return this.indexer.cli.callees(
+                return this.indexer.callees(
                     this.requireString(request.arguments, "query"),
                     this.indexerOptions(request.arguments)
                 );
 
             case "indexer.dependencies":
-                return this.indexer.cli.dependencies(
+                return this.indexer.dependencies(
                     this.requireString(request.arguments, "query"),
                     this.indexerOptions(request.arguments)
                 );
 
             case "indexer.dependents":
-                return this.indexer.cli.dependents(
+                return this.indexer.dependents(
                     this.requireString(request.arguments, "query"),
                     this.indexerOptions(request.arguments)
                 );
 
             case "indexer.path":
-                return this.indexer.cli.symbolPath(
+                return this.indexer.symbolPath(
                     this.requireString(request.arguments, "from"),
                     this.requireString(request.arguments, "to"),
                     this.indexerOptions(request.arguments)
                 );
 
             case "indexer.repository_map":
-                return this.indexer.cli.repositoryMap(this.indexerOptions(request.arguments));
+                return this.indexer.repositoryMap(this.indexerOptions(request.arguments));
 
             case "indexer.api_endpoints":
-                return this.indexer.cli.apiEndpoints(this.indexerOptions(request.arguments));
+                return this.indexer.apiEndpoints(this.indexerOptions(request.arguments));
 
             case "indexer.classify_query":
-                return this.indexer.cli.classifyQuery(
+                return this.indexer.classifyQuery(
                     this.requireString(request.arguments, "query"),
                     this.indexerOptions(request.arguments)
                 );
 
             case "indexer.sensitive_regions":
-                return this.indexer.cli.sensitiveRegions(this.indexerOptions(request.arguments));
+                return this.indexer.sensitiveRegions(this.indexerOptions(request.arguments));
 
             case "indexer.stop_watch":
-                return this.indexer.cli.stopBackground("watch");
+                return this.indexer.stopBackground("watch");
 
             case "indexer.stop_dashboard":
-                return this.indexer.cli.stopBackground("dashboard");
+                return this.indexer.stopBackground("dashboard");
 
             case "indexer.files":
-                return this.indexer.cli.files(this.indexerOptions(request.arguments));
+                return this.indexer.files(this.indexerOptions(request.arguments));
 
             case "indexer.inspect":
-                return this.indexer.cli.inspect(
+                return this.indexer.inspect(
                     this.requireString(request.arguments, "path"),
                     this.indexerOptions(request.arguments)
                 );
@@ -417,7 +443,7 @@ export class Agent {
                 if (!safePath) {
                     throw new Error(`Index removal path is outside the active workspace or invalid: ${requestedPath}`);
                 }
-                return this.indexer.cli.remove(safePath, { ...this.indexerOptions(request.arguments), force: true });
+                return this.indexer.remove(safePath, { ...this.indexerOptions(request.arguments), force: true });
             }
 
             case "indexer.watch": {
@@ -426,11 +452,11 @@ export class Agent {
                 if (requestedPath && !safePath) {
                     throw new Error(`Watch path is outside the active workspace or invalid: ${requestedPath}`);
                 }
-                return this.indexer.cli.watch(safePath, this.indexerOptions(request.arguments));
+                return this.indexer.watch(safePath, this.indexerOptions(request.arguments));
             }
 
             case "indexer.dashboard":
-                return this.indexer.cli.dashboard(this.indexerOptions(request.arguments));
+                return this.indexer.dashboard(this.indexerOptions(request.arguments));
 
             default:
                 throw new Error(`Unsupported tool: ${request.tool}`);
@@ -603,8 +629,8 @@ export class Agent {
                         cancellable: false
                     },
                     async progress => {
-                        progress.report({ message: "Downloading or verifying the platform runtime..." });
-                        const runtime = await this.indexer.cli.ensureRuntime();
+                        progress.report({ message: "Verifying the bundled SDK and parser assets..." });
+                        const runtime = await this.indexer.ensureRuntime();
                         progress.report({ message: `Codebase Indexer ${runtime.version} is ready.` });
                         return runtime;
                     }
@@ -613,14 +639,11 @@ export class Agent {
         } catch {
             // The Agent can also run in standalone/test contexts without VS Code UI.
         }
-        return this.indexer.cli.ensureRuntime();
+        return this.indexer.ensureRuntime();
     }
 
     async dispose(): Promise<void> {
-        await Promise.all([
-            this.indexer.cli.stopBackground("watch"),
-            this.indexer.cli.stopBackground("dashboard")
-        ]);
+        await this.indexer.dispose();
     }
 
     private async getFileDiagnostics(filePath: string): Promise<FileDiagnosticsResult> {

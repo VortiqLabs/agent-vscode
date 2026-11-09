@@ -10,7 +10,7 @@ import { VortiqMcpServer } from "../mcp/server";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 
-const TEST_WORKSPACE = path.resolve(__dirname, "test_workspace_fixture");
+const TEST_WORKSPACE = path.resolve(__dirname, "test_workspace_fixture_mcp");
 
 function setupFixture() {
     if (!fs.existsSync(TEST_WORKSPACE)) {

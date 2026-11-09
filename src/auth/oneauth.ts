@@ -5,6 +5,7 @@ import * as vscode from "vscode";
 const ACCESS_TOKEN_KEY = "oneauth.accessToken";
 const REFRESH_TOKEN_KEY = "oneauth.refreshToken";
 const EXPIRES_AT_KEY = "oneauth.expiresAt";
+const USER_INFO_KEY = "oneauth.userInfo";
 const DEFAULT_BASE_URL = "https://oneauth.nishantapps.in";
 const DEFAULT_CLIENT_ID = "oa_8WSUjKeAT6CaaJLdZ1Lsr-oHu-ow3LHT";
 const REDIRECT_URI = "http://localhost:8765/callback";
@@ -52,7 +53,11 @@ export class OneAuthClient {
         return Boolean(await this.context.secrets.get(ACCESS_TOKEN_KEY));
     }
 
-    async getUserInfo(): Promise<OneAuthUserInfo | undefined> {
+    async getUserInfo(options: { refresh?: boolean } = {}): Promise<OneAuthUserInfo | undefined> {
+        if (!options.refresh) {
+            const cached = this.context.globalState.get<OneAuthUserInfo>(USER_INFO_KEY);
+            if (cached) { return cached; }
+        }
         const accessToken = await this.getAccessToken();
         const endpoint = new URL("/api/oauth/userinfo", this.baseUrl);
         const response = await fetch(endpoint, {
@@ -65,7 +70,7 @@ export class OneAuthClient {
             throw new Error(`Could not load OneAuth profile (HTTP ${response.status}).${body ? ` ${body.slice(0, 180)}` : ""}`);
         }
         const payload = await response.json() as OneAuthUserInfo;
-        return {
+        const userInfo: OneAuthUserInfo = {
             sub: typeof payload.sub === "string" ? payload.sub : undefined,
             name: typeof payload.name === "string" ? payload.name : undefined,
             preferred_username: typeof payload.preferred_username === "string" ? payload.preferred_username : undefined,
@@ -73,10 +78,16 @@ export class OneAuthClient {
             email_verified: typeof payload.email_verified === "boolean" ? payload.email_verified : undefined,
             picture: typeof payload.picture === "string" ? payload.picture : undefined
         };
+        await this.context.globalState.update(USER_INFO_KEY, userInfo);
+        return userInfo;
     }
 
     async signIn(): Promise<void> {
         this.log("Sign-in button clicked.");
+        if (await this.isSignedIn()) {
+            this.log("Valid saved OneAuth session found; reusing it without opening OAuth.");
+            return;
+        }
         if (!this.clientId) {
             this.log("Sign-in stopped: OAuth client ID is missing.");
             throw new Error("Set VortiqLabs Agent › OneAuth Client ID in extension settings.");
@@ -125,7 +136,8 @@ export class OneAuthClient {
         await Promise.all([
             this.context.secrets.delete(ACCESS_TOKEN_KEY),
             this.context.secrets.delete(REFRESH_TOKEN_KEY),
-            this.context.secrets.delete(EXPIRES_AT_KEY)
+            this.context.secrets.delete(EXPIRES_AT_KEY),
+            this.context.globalState.update(USER_INFO_KEY, undefined)
         ]);
         this.log("Signed out.");
     }

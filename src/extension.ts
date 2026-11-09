@@ -1,17 +1,14 @@
 import * as vscode from "vscode";
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
 import { AgentActivity } from "./ui/activity";
 import { AgentSidebarProvider } from "./ui/sidebar";
 import { OneAuthClient } from "./auth/oneauth";
 import { OneAuthTunnelClient, TunnelInfo } from "./tunnel/oneauth-tunnel";
-import { OpenAISecureTunnel } from "./tunnel/openai-secure-tunnel";
 
 import {
     Agent
 } from "./agent/agent";
-
-import {
-    AgentServer
-} from "./transport";
 
 import {
     generateAuthToken
@@ -24,6 +21,17 @@ import {
 export async function activate(
     context: vscode.ExtensionContext
 ) {
+    // Remove credentials and the downloaded runtime left by the retired OpenAI MCP tunnel.
+    await Promise.all([
+        context.secrets.delete("openaiTunnel.runtimeApiKey"),
+        context.secrets.delete("openaiTunnel.tunnelId"),
+        fs.rm(path.join(context.globalStorageUri.fsPath, "openai-tunnel-client"), { recursive: true, force: true })
+    ]);
+    const legacyTunnelSettings = vscode.workspace.getConfiguration("vortiqlabsAgent");
+    await Promise.all([
+        legacyTunnelSettings.update("openAITunnelRuntime", undefined, vscode.ConfigurationTarget.Global),
+        legacyTunnelSettings.update("openAITunnelOrganizationId", undefined, vscode.ConfigurationTarget.Global)
+    ]);
     const output = vscode.window.createOutputChannel("VortiqLabs Agent");
     context.subscriptions.push(output);
     const log = (message: string, details?: unknown) => {
@@ -71,71 +79,33 @@ export async function activate(
     const agent =
         new Agent(context, undefined, activity);
 
-    const agentServer =
-        new AgentServer(
-            agent,
-            {
-                host:
-                    "127.0.0.1",
-                port:
-                    43127,
-                authToken,
-                version: context.extension.packageJSON.version
-            }
-        );
-
     const workspaceRoot =
         process.env.MCP_WORKSPACE_ROOT ||
         vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
     const mcpServer = new VortiqMcpServer({
-        host: context.extensionMode === vscode.ExtensionMode.Development ? "0.0.0.0" : "127.0.0.1",
+        host: "127.0.0.1",
+        port: 3000,
         workspaceRoot,
-        agentUrl: process.env.VORTIQLABS_AGENT_URL || "http://127.0.0.1:43127",
-        agentAuthToken: authToken,
+        agentRequestHandler: request => agent.handle(request),
         extensionVersion: context.extension.packageJSON.version
     });
 
-    let serversStarted = false;
-    let serversStarting: Promise<void> | undefined;
-    const startAuthenticatedServers = async (): Promise<void> => {
-        if (serversStarted) { return; }
-        if (serversStarting) { return serversStarting; }
-        serversStarting = (async () => {
-            await agentServer.start();
-            log("Agent API server listening after OneAuth authentication", { host: agentServer.getHost(), port: agentServer.getPort() });
-            try {
-                await mcpServer.start();
-                serversStarted = true;
-                log("MCP server listening after OneAuth authentication", { host: mcpServer.getHost(), port: mcpServer.getPort(), path: "/mcp" });
-            } catch (error) {
-                await agentServer.stop().catch(() => undefined);
-                throw error;
-            }
-        })();
-        try { await serversStarting; }
-        finally { serversStarting = undefined; }
-    };
-    const stopAuthenticatedServers = async (): Promise<void> => {
-        if (serversStarting) { await serversStarting.catch(() => undefined); }
-        if (!serversStarted) { return; }
-        await mcpServer.stop();
-        await agentServer.stop();
-        serversStarted = false;
-        log("Agent API and MCP servers stopped because the OneAuth session ended.");
-    };
+    await mcpServer.start();
+    log("MCP server listening without OneAuth authentication", { host: mcpServer.getHost(), port: mcpServer.getPort(), path: "/mcp" });
 
     const focusActivityCommand = vscode.commands.registerCommand("vortiqlabs-agent.focusActivity", async () => {
         await vscode.commands.executeCommand("workbench.view.extension.vortiqlabs-agent");
     });
     const authClient = new OneAuthClient(context, output);
     const tunnelClient = new OneAuthTunnelClient(authClient);
-    const openAITunnel = new OpenAISecureTunnel(context, output);
     let sidebarProvider!: AgentSidebarProvider;
     const doSignIn = async () => {
         log("OneAuth sign-in action invoked.");
         await authClient.signIn();
         sidebarProvider.setAuthState(true);
         try {
+            // User profile is persisted in VS Code globalState; avoid a userinfo API
+            // request on every activation or repeated Sign in click.
             const userInfo = await authClient.getUserInfo();
             sidebarProvider.setUserInfo(userInfo);
             log("OneAuth profile loaded after sign-in.", {
@@ -150,12 +120,9 @@ export async function activate(
             sidebarProvider.setUserInfo(undefined);
             throw error instanceof Error ? error : new Error(message);
         }
-        await startAuthenticatedServers();
-        log("OneAuth sign-in action completed; authenticated services are running.");
+        log("OneAuth sign-in action completed.");
     };
     const doSignOut = async () => {
-        await openAITunnel.disconnect();
-        await stopAuthenticatedServers();
         await authClient.signOut();
         await context.globalState.update("agentTunnel", undefined);
         sidebarProvider.setAuthState(false);
@@ -173,8 +140,6 @@ export async function activate(
         signOut: doSignOut,
         getUserInfo: () => authClient.getUserInfo(),
         provisionTunnel: getTunnel,
-        connectOpenAITunnel: () => openAITunnel.connect(`http://127.0.0.1:${mcpServer.getPort()}/mcp`),
-        disconnectOpenAITunnel: () => openAITunnel.disconnect(),
         resolveCodeChange: (id, decision) => agent.resolveChangeReview(id, decision)
     }, output);
     const savedTunnel = context.globalState.get<TunnelInfo>("agentTunnel");
@@ -183,9 +148,10 @@ export async function activate(
         sidebarProvider.setAuthState(signedIn);
         if (signedIn) {
             try {
+                // getUserInfo serves the persisted profile cache first and only calls
+                // OneAuth if this is the first profile load for this installation.
                 sidebarProvider.setUserInfo(await authClient.getUserInfo());
-                await startAuthenticatedServers();
-                log("Existing OneAuth session restored; authenticated services are running.");
+                log("Existing OneAuth session restored.");
             } catch (error) {
                 const message = error instanceof Error ? error.message : String(error);
                 log("Unable to restore OneAuth profile", message);
@@ -213,28 +179,13 @@ export async function activate(
             return;
         }
 
-        log("No OneAuth session found; MCP and Agent API servers remain stopped until sign-in.");
+        log("No OneAuth session found; MCP server remains available without authentication.");
     }).catch(error => log("Unable to restore OneAuth sign-in state", error instanceof Error ? error.message : String(error)));
     const signInCommand = vscode.commands.registerCommand("vortiqlabs-agent.signIn", async () => {
         try {await doSignIn();} catch (error) {void vscode.window.showErrorMessage(error instanceof Error ? error.message : String(error));}
     });
     const signOutCommand = vscode.commands.registerCommand("vortiqlabs-agent.signOut", async () => {
         try {await doSignOut();} catch (error) {void vscode.window.showErrorMessage(error instanceof Error ? error.message : String(error));}
-    });
-    const connectOpenAITunnelCommand = vscode.commands.registerCommand("vortiqlabs-agent.connectOpenAITunnel", async () => {
-        try {
-            const message = await openAITunnel.connect(`http://127.0.0.1:${mcpServer.getPort()}/mcp`);
-            log(message);
-            void vscode.window.showInformationMessage(message);
-        } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            log("OpenAI Secure MCP Tunnel connection failed", message);
-            void vscode.window.showErrorMessage(message);
-        }
-    });
-    const disconnectOpenAITunnelCommand = vscode.commands.registerCommand("vortiqlabs-agent.disconnectOpenAITunnel", async () => {
-        try { await openAITunnel.disconnect(); void vscode.window.showInformationMessage("OpenAI Secure MCP Tunnel disconnected."); }
-        catch (error) { void vscode.window.showErrorMessage(error instanceof Error ? error.message : String(error)); }
     });
     const getTunnelCommand = vscode.commands.registerCommand("vortiqlabs-agent.getTunnel", async () => {
         try {const tunnel = await getTunnel(); void vscode.window.showInformationMessage(`Tunnel: ${tunnel.url} · port ${tunnel.port}`);} catch (error) {void vscode.window.showErrorMessage(error instanceof Error ? error.message : String(error));}
@@ -246,9 +197,6 @@ export async function activate(
         signOutCommand,
         getTunnelCommand
     );
-
-    // Agent API and MCP listeners are started only by startAuthenticatedServers()
-    // after a valid OneAuth session is restored or a user completes sign-in.
 
     const workspaceCommand =
         vscode.commands.registerCommand(
@@ -509,18 +457,6 @@ export async function activate(
                     .catch(error => {
                         console.error(
                             "Failed to stop VortiqLabs Agent MCP server:",
-                            error
-                        );
-                    });
-            }
-        },
-        {
-            dispose: () => {
-                void agentServer
-                    .stop()
-                    .catch(error => {
-                        console.error(
-                            "Failed to stop VortiqLabs Agent server:",
                             error
                         );
                     });

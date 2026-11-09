@@ -15,3 +15,6 @@ vsc-extension-quickstart.md
 **/*.map
 **/*.ts
 **/.vscode-test.*
+
+vendor/**
+scripts/**

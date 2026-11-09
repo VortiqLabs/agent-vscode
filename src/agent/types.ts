@@ -20,6 +20,8 @@ export type AgentToolName =
     | "indexer.index_github"
     | "indexer.status"
     | "indexer.search"
+    | "indexer.context"
+    | "indexer.chunks"
     | "indexer.symbols"
     | "indexer.references"
     | "indexer.callers"

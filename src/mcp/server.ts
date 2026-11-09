@@ -8,7 +8,7 @@ import type { ZodRawShapeCompat } from "@modelcontextprotocol/sdk/server/zod-com
 
 import { validateOrigin } from "./auth";
 import { AgentClient } from "./agent-client";
-import type { AgentToolName } from "../agent/types";
+import type { AgentRequest, AgentResponse, AgentToolName } from "../agent/types";
 
 export interface McpServerOptions {
     host?: string;
@@ -17,6 +17,7 @@ export interface McpServerOptions {
     allowedOrigins?: string[];
     agentUrl?: string;
     agentAuthToken?: string;
+    agentRequestHandler?: (request: AgentRequest) => Promise<AgentResponse>;
     extensionVersion?: string;
 }
 
@@ -42,10 +43,10 @@ export class VortiqMcpServer {
             options.allowedOrigins ||
             process.env.MCP_ALLOWED_ORIGINS?.split(",").map(origin => origin.trim()).filter(Boolean);
         this.extensionVersion = options.extensionVersion ?? process.env.VORTIQLABS_AGENT_EXTENSION_VERSION ?? "unknown";
-
         this.agentClient = new AgentClient({
             baseUrl: options.agentUrl,
-            authToken: options.agentAuthToken
+            authToken: options.agentAuthToken,
+            requestHandler: options.agentRequestHandler
         });
     }
 
@@ -466,7 +467,8 @@ export class VortiqMcpServer {
             {
                 query: z.string().min(1).describe("Text or concept to search for in the indexed codebase"),
                 limit: z.number().int().min(1).max(100).optional().describe("Maximum results, between 1 and 100"),
-                mode: z.enum(["hybrid", "lexical", "semantic"]).optional().describe("Search strategy; hybrid is the default")
+                mode: z.enum(["hybrid", "lexical", "semantic"]).optional().describe("Search strategy; hybrid is the default"),
+                indexDir: z.string().optional().describe("Optional index directory, if the index was created outside the default cache")
             },
             async args => {
                 try {
@@ -578,25 +580,48 @@ export class VortiqMcpServer {
         this.registerForwardingTool(
             server,
             "indexer_install",
-            "Download and install the pinned Codebase Indexer runtime for this OS/architecture, verify its SHA-256, and reuse the cached installation on subsequent calls.",
+            "Verify the bundled Codebase Indexer SDK and its local Tree-sitter/GitHub worker assets are ready. Core indexing does not download a separate runtime.",
             {},
             "indexer.install"
         );
         this.registerForwardingTool(
             server,
             "indexer_index_github",
-            "Download and index a GitHub repository using the Codebase Indexer runtime. Provide owner/repository or a GitHub URL; private repositories require GITHUB_TOKEN or GH_TOKEN in the extension environment.",
+            "Download and index a GitHub repository using the Codebase Indexer SDK. Provide owner/repository or a GitHub URL; private repositories require GITHUB_TOKEN or GH_TOKEN in the extension environment.",
             {
                 repository: z.string().min(3).describe("GitHub owner/repository slug or repository URL"),
                 ref: z.string().optional().describe("Git branch, tag, or commit; defaults to HEAD"),
                 indexDir: z.string().optional().describe("Optional directory for storing the index"),
-                force: z.boolean().optional().describe("Force re-indexing of the repository"),
-                workers: z.number().int().min(1).max(16).optional().describe("Parser worker count (1–16)"),
-                memoryLimit: z.number().int().min(256).max(65536).optional().describe("Memory limit in MB (256–65536)"),
-                profile: z.enum(["default", "large"]).optional().describe("Indexing profile for normal or large codebases"),
-                noEmbeddings: z.boolean().optional().describe("Disable vector embeddings")
+                maxFileSize: z.string().optional().describe("Maximum source file size, e.g. 5mb"),
+                ignore: z.array(z.string()).max(100).optional().describe("Additional ignore patterns")
             },
             "indexer.index_github"
+        );
+        this.registerForwardingTool(
+            server,
+            "indexer_context",
+            "Build LLM-ready codebase context for a natural-language question, using indexed files and related-file graph expansion within explicit file/token budgets.",
+            {
+                query: z.string().min(1).describe("Question to answer using the indexed codebase"),
+                indexDir: z.string().optional().describe("Optional index directory, if the index was created outside the default cache"),
+                maxFiles: z.number().int().min(1).max(32).optional().describe("Maximum source files to include; defaults to 8"),
+                maxTokens: z.number().int().min(256).max(50000).optional().describe("Approximate context token budget; defaults to 6000"),
+                includeRelatedFiles: z.boolean().optional().describe("Include graph-related files when useful; defaults to true")
+            },
+            "indexer.context"
+        );
+        this.registerForwardingTool(
+            server,
+            "indexer_chunks",
+            "Retrieve indexed source chunks, optionally filtered by query or workspace-relative file path. Useful for inspecting exact indexed code segments.",
+            {
+                query: z.string().optional().describe("Optional text query to filter chunk contents and paths"),
+                indexDir: z.string().optional().describe("Optional index directory, if the index was created outside the default cache"),
+                filePath: z.string().optional().describe("Optional workspace-relative file path"),
+                limit: z.number().int().min(1).max(500).optional().describe("Maximum chunks to return; defaults to 20"),
+                offset: z.number().int().min(0).max(100000).optional().describe("Pagination offset")
+            },
+            "indexer.chunks"
         );
         this.registerForwardingTool(
             server,
