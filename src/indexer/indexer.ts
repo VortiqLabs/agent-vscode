@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { Codebase, CodebaseOptions, IndexProgress } from "@vortiqlabs/codebase-indexer/api" with { "resolution-mode": "import" };
-import type { GitHubRepositoryIndexResult, GitHubRepositoryIndexerOptions } from "@vortiqlabs/codebase-indexer/github" with { "resolution-mode": "import" };
+import type { GitHubRepositoryIndexResult, GitHubRepositoryIndexerOptions } from "@vortiqlabs/codebase-indexer" with { "resolution-mode": "import" };
 import { IndexerCLI } from "./cli";
 import { IndexerExecutable } from "./executable";
 import { IndexerRuntimeManager } from "./runtime/manager";
@@ -83,7 +83,7 @@ export class IndexerService {
         const { owner, name } = parseGitHubRepository(repository);
         await this.ensureRuntime();
         this.captureRuntimeRoot();
-        const sdk = await import("@vortiqlabs/codebase-indexer/github") as GitHubModule;
+        const sdk = await import("@vortiqlabs/codebase-indexer") as GitHubModule;
         const githubOptions: GitHubRepositoryIndexerOptions = {
             indexDir: options?.indexDir ?? this.defaultIndexDir(),
             ...(process.env.GITHUB_TOKEN || process.env.GH_TOKEN
