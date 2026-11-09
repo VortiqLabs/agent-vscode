@@ -1,0 +1,3 @@
+[submodule "vendor/codebase-indexer"]
+	path = vendor/codebase-indexer
+	url = https://github.com/VortiqLabs/codebase-indexer.git
