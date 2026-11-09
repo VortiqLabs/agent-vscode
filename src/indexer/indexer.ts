@@ -13,7 +13,7 @@ export const CODEBASE_INDEXER_SDK_VERSION = "0.2.0";
 
 type CodebaseInstance = Codebase;
 type CodebaseModule = typeof import("@vortiqlabs/codebase-indexer/api", { with: { "resolution-mode": "import" } });
-type GitHubModule = typeof import("@vortiqlabs/codebase-indexer/github", { with: { "resolution-mode": "import" } });
+type GitHubModule = typeof import("@vortiqlabs/codebase-indexer", { with: { "resolution-mode": "import" } });
 
 /**
  * Application adapter around the official Codebase Indexer SDK.
@@ -236,12 +236,17 @@ export class IndexerService {
     }
 
     async remove(workspacePath: string, options?: IndexerOptions): Promise<IndexerResult> {
+        if (path.resolve(workspacePath) === path.resolve(this.workspaceRoot) && this.selectedGitHubTarget) {
+            this.selectedGitHubTarget = undefined;
+            this.selectedIndexDir = undefined;
+        }
         const codebase = await this.getCodebase(workspacePath, options);
         const removed = await codebase.removeIndex();
         return this.success({ removed, workspacePath: path.resolve(workspacePath) });
     }
 
     async watch(workspacePath?: string, options?: IndexerOptions): Promise<IndexerResult> {
+        if (this.selectedGitHubTarget) {this.selectedIndexDir = undefined;}
         this.selectedGitHubTarget = undefined;
         const codebase = await this.getCodebase(workspacePath ?? this.workspaceRoot, options);
         const status = await codebase.startWatching({

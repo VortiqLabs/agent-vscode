@@ -8,10 +8,11 @@ const sdkRoot = path.join(root, 'vendor', 'codebase-indexer');
 const sdkDist = path.join(sdkRoot, 'dist');
 const runtimeDist = path.join(root, 'dist', 'indexer-runtime');
 const tsc = path.join(root, 'node_modules', 'typescript', 'bin', 'tsc');
+const sdkTsconfig = path.join(root, 'scripts', 'codebase-indexer.tsconfig.json');
 
 rmSync(sdkDist, { recursive: true, force: true });
 mkdirSync(sdkDist, { recursive: true });
-const compile = spawnSync(process.execPath, [tsc, '-p', path.join(sdkRoot, 'tsconfig.sdk.json')], {
+const compile = spawnSync(process.execPath, [tsc, '-p', sdkTsconfig], {
   cwd: root,
   stdio: 'inherit',
   env: process.env,
@@ -38,4 +39,4 @@ cpSync(path.join(root, 'node_modules', 'web-tree-sitter', 'tree-sitter.wasm'), p
 cpSync(path.join(root, 'node_modules', 'web-tree-sitter', 'tree-sitter.wasm'), path.join(runtimeDist, 'workers', 'tree-sitter.wasm'));
 cpSync(path.join(sdkDist, 'workers'), path.join(runtimeDist, 'workers'), { recursive: true });
 writeFileSync(path.join(runtimeDist, 'workers', 'package.json'), JSON.stringify({ type: 'module' }, null, 2) + '\n');
-console.log('Built Codebase Indexer SDK v0.2.0 and bundled parser/GitHub worker assets.');
+console.log('Built Codebase Indexer SDK from the pinned Git submodule and bundled parser/GitHub worker assets.');

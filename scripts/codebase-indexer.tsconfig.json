@@ -1,0 +1,11 @@
+{
+  "extends": "../vendor/codebase-indexer/tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "../vendor/codebase-indexer",
+    "outDir": "../vendor/codebase-indexer/dist",
+    "declarationMap": false,
+    "sourceMap": false
+  },
+  "include": ["../vendor/codebase-indexer/src/**/*.ts"],
+  "exclude": ["../vendor/codebase-indexer/src/**/*.test.ts"]
+}
